@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard | CWS Multimedia Connect</title>
+  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-277GPFBX9Z"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-277GPFBX9Z');
+  </script>
+</head>
+<body data-page="dashboard">
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="index.html" class="logo"></a>
+      <div class="nav-actions">
+        <a href="creativeconnect.html" class="nav-ghost">CreativeConnect</a>
+        <a href="pricing.html" class="nav-ghost">Pricing</a>
+        <button id="logoutBtn" class="nav-solid" type="button">Log out</button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="page-shell">
+    <section class="page-hero compact">
+      <div class="container narrow">
+        <span class="subheading">DASHBOARD</span>
+        <h1>Account overview</h1>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <div id="userSummary" class="dashboard-grid"></div>
+
+        <!-- Buyer: unlock a purchased design -->
+        <div class="table-wrap panel" data-user-only>
+          <div class="admin-panel-header">
+            <h3>Unlock your design</h3>
+            <p>After your payment is confirmed you get an access code (shown in My orders below). Enter it here to download your file.</p>
+          </div>
+          <form id="redeemForm" class="redeem-form">
+            <input id="redeemCode" type="text" placeholder="CWS-XXXX-XXXX" autocomplete="off" required />
+            <button type="submit" class="btn-primary">Unlock file</button>
+          </form>
+          <div id="redeemMessage" class="form-message" aria-live="polite"></div>
+        </div>
+
+        <!-- Orders -->
+        <div class="table-wrap panel">
+          <div class="admin-panel-header">
+            <h3 data-admin-only>Orders (all customers)</h3>
+            <h3 data-user-only>My orders</h3>
+            <p data-admin-only>Confirm an EcoCash payment to release the buyer's access code.</p>
+          </div>
+          <table>
+            <thead>
+              <tr><th>#</th><th>Item</th><th>Amount</th><th>Status</th><th>Access code</th><th></th></tr>
+            </thead>
+            <tbody id="ordersTableBody"></tbody>
+          </table>
+        </div>
+
+        <!-- Invoices -->
+        <div class="table-wrap panel">
+          <div class="admin-panel-header">
+            <h3>Invoices</h3>
+            <p data-admin-only>Create, edit and remove invoices. If the client email matches a registered account, the client sees it in their own dashboard.</p>
+          </div>
+          <table>
+            <thead>
+              <tr><th>Invoice</th><th>Client</th><th>Total</th><th>Status</th><th>Due</th><th></th></tr>
+            </thead>
+            <tbody id="invoiceTableBody"></tbody>
+          </table>
+
+          <form id="invoiceForm" class="design-form" data-admin-only style="margin-top:24px">
+            <input type="hidden" id="invId" />
+            <div><label for="invClient">Client name</label><input id="invClient" type="text" required /></div>
+            <div><label for="invEmail">Client email</label><input id="invEmail" type="email" /></div>
+            <div><label for="invDue">Due date</label><input id="invDue" type="date" /></div>
+            <div>
+              <label for="invStatus">Status</label>
+              <select id="invStatus"><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="void">Void</option></select>
+            </div>
+            <div class="design-form-description">
+              <label>Line items</label>
+              <div id="invLines"></div>
+              <button type="button" id="invAddLine" class="mini-btn">+ Add line</button>
+              <p class="muted" style="margin-top:8px">Total: <strong id="invTotal">$0.00</strong></p>
+            </div>
+            <div class="design-form-description"><label for="invNotes">Notes</label><textarea id="invNotes" rows="2" placeholder="Payment terms, thank-you note…"></textarea></div>
+            <button type="submit" id="invSubmit" class="btn-primary design-submit">Create invoice</button>
+            <button type="button" id="invCancel" class="btn-secondary" style="display:none">Cancel edit</button>
+            <div id="invMessage" class="form-message" aria-live="polite"></div>
+          </form>
+        </div>
+
+        <!-- Admin: catalog -->
+        <div class="table-wrap panel" data-admin-only>
+          <div class="admin-panel-header">
+            <h3>CreativeConnect catalog</h3>
+            <p>Every design gets an item code that buyers see on the catalog. Upload the preview image (public) and the real file (private, only released with a paid access code).</p>
+          </div>
+
+          <form id="designForm" class="design-form" data-mode="create">
+            <input type="hidden" id="postId" name="postId" />
+            <div><label for="designCode">Item code (leave empty for automatic)</label><input id="designCode" name="item_code" type="text" placeholder="CC-0007" /></div>
+            <div><label for="designTitle">Design title</label><input id="designTitle" name="title" type="text" required /></div>
+            <div>
+              <label for="designCategory">Category</label>
+              <select id="designCategory" name="category">
+                <option value="Flyer">Flyer</option><option value="Poster">Poster</option><option value="Branding">Branding</option>
+                <option value="Event">Event</option><option value="Church">Church</option><option value="Social">Social Media</option>
+              </select>
+            </div>
+            <div><label for="designPrice">Price</label><input id="designPrice" name="price" type="text" placeholder="$25" required /></div>
+            <div>
+              <label for="designAvailability">Availability</label>
+              <select id="designAvailability" name="status"><option value="available">Available</option><option value="limited">Limited</option><option value="booked">Booked (hidden from buying)</option></select>
+            </div>
+            <div><label for="designFormat">Format</label><input id="designFormat" name="format" type="text" placeholder="Poster • A3" /></div>
+            <div><label for="designDelivery">Delivery</label><input id="designDelivery" name="delivery" type="text" placeholder="Instant after payment" /></div>
+            <div>
+              <label for="designImage">Preview image</label>
+              <input id="designImage" name="image" type="text" placeholder="church-service.jpg" required />
+              <input id="previewUpload" type="file" accept="image/png,image/jpeg,image/webp" />
+              <small id="previewStatus" class="muted"></small>
+            </div>
+            <div>
+              <label for="designFile">File buyers receive</label>
+              <input id="designFile" name="file_name" type="text" placeholder="uploaded file name" />
+              <input id="fileUpload" type="file" />
+              <small id="fileStatus" class="muted"></small>
+            </div>
+            <div class="design-form-description"><label for="designDescription">Description</label><textarea id="designDescription" name="description" rows="2"></textarea></div>
+            <div class="design-form-description"><label for="designFeatures">Highlights (one per line)</label><textarea id="designFeatures" name="features" rows="3"></textarea></div>
+            <button type="submit" class="btn-primary design-submit">Add design</button>
+            <button type="button" id="designCancel" class="btn-secondary" style="display:none">Cancel edit</button>
+            <div id="designMessage" class="form-message" aria-live="polite"></div>
+          </form>
+
+          <div id="designList" class="design-list"></div>
+        </div>
+
+        <!-- Admin: users -->
+        <div class="table-wrap panel" data-admin-only>
+          <div class="admin-panel-header"><h3>Registered users</h3></div>
+          <table>
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead>
+            <tbody id="adminUserList"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-content">
+      <div class="footer-links"><a href="terms.html">Terms &amp; Conditions</a><a href="privacy.html">Privacy Policy</a><a href="contact.html">Contact</a></div>
+      <p>2026 CWS Multimedia Connect • Owner: Chikomborero Walter Sumairi • Kadoma, Zimbabwe</p>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
