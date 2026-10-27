@@ -20,5 +20,13 @@ Sign in at /login.html, then use the dashboard to manage designs, orders, invoic
 
 The first six designs use their preview image as a placeholder file. In Dashboard > CreativeConnect catalog > Edit, upload the real file under "File buyers receive".
 
+## Proof of payment
+On the buy panel the buyer can paste the EcoCash reference, attach a screenshot, or both. Screenshots are stored privately in `proofs/` and only the buyer and admin can open them (Dashboard > Orders > View proof). A buyer can also add or replace proof later from their dashboard. After ordering, a WhatsApp button lets them message the owner straight away.
+
+## Google and Apple sign-in
+Run `npm install` again (adds `jose`). Then set the keys in `.env`; the buttons only show once the keys exist.
+- Google: Google Cloud Console > Credentials > OAuth client ID (Web). Add your site address under Authorised JavaScript origins. Put the ID in `GOOGLE_CLIENT_ID`.
+- Apple: needs an Apple Developer account and HTTPS. Create a Services ID, add your domain and return URL, then set `APPLE_CLIENT_ID` and `APPLE_REDIRECT_URI`.
+
 ## Going live
-Copy `.env.example` to `.env`, set `NODE_ENV=production`, your real `BASE_URL`, a long random `SESSION_SECRET` and run behind HTTPS. Never upload `.env`, `data/` or `deliverables/` to a public folder.
+Copy `.env.example` to `.env`, set `NODE_ENV=production`, your real `BASE_URL`, a long random `SESSION_SECRET` and run behind HTTPS. Never upload `.env`, `data/`, `proofs/` or `deliverables/` to a public folder.

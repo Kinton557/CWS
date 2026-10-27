@@ -766,6 +766,8 @@
               <strong>Pay by EcoCash</strong>
               <p id="buyInstructions" style="margin-top:6px"></p>
               <input id="buyRef" type="text" placeholder="EcoCash transaction reference" autocomplete="off" />
+              <label class="proof-label" for="buyProof">Or attach a screenshot of your payment</label>
+              <input id="buyProof" type="file" accept="image/*,.pdf" />
               <button type="button" class="buy-confirm" id="buyConfirm">I have paid – place order</button>
               <div id="buyMsg" class="buy-msg" aria-live="polite"></div>
             </div>
@@ -964,6 +966,7 @@
       document.getElementById('buyPanel').hidden = true;
       document.getElementById('buyMsg').textContent = '';
       document.getElementById('buyRef').value = '';
+      document.getElementById('buyProof').value = '';
       const buyBtn = document.getElementById('buyNowBtn');
       buyBtn.disabled = item.status === 'booked';
       buyBtn.textContent = item.status === 'booked' ? 'Unavailable' : 'Buy now';
@@ -1021,17 +1024,29 @@
 
     document.getElementById('buyConfirm').addEventListener('click', async () => {
       const msg = document.getElementById('buyMsg');
+      const btn = document.getElementById('buyConfirm');
       const ref = document.getElementById('buyRef').value.trim();
+      const proof = document.getElementById('buyProof').files[0];
       msg.className = 'buy-msg';
-      if (!ref) { msg.classList.add('error'); msg.textContent = 'Enter the EcoCash transaction reference first.'; return; }
-      const { response, data } = await fetchJson('/api/orders', {
-        method: 'POST',
-        body: JSON.stringify({ postId: currentItem.id, paymentMethod: 'ecocash_manual', paymentRef: ref })
-      });
-      if (response.status === 401) { window.location.href = 'login.html?next=creativeconnect.html'; return; }
-      if (!response.ok || !data.success) { msg.classList.add('error'); msg.textContent = data.message || 'Could not place the order.'; return; }
-      msg.classList.add('ok');
-      msg.innerHTML = `${esc(data.message)} <a href="dashboard.html" style="text-decoration:underline">Open dashboard</a>`;
+      if (!ref && !proof) { msg.classList.add('error'); msg.textContent = 'Enter the EcoCash reference or attach a screenshot of your payment.'; return; }
+      if (proof && proof.size > 8 * 1024 * 1024) { msg.classList.add('error'); msg.textContent = 'That file is over 8 MB. Please choose a smaller screenshot.'; return; }
+      btn.disabled = true;
+      try {
+        const { response, data } = await fetchJson('/api/orders', {
+          method: 'POST',
+          body: JSON.stringify({ postId: currentItem.id, paymentMethod: 'ecocash_manual', paymentRef: ref, hasProof: !!proof })
+        });
+        if (response.status === 401) { window.location.href = 'login.html?next=creativeconnect.html'; return; }
+        if (!response.ok || !data.success) { msg.classList.add('error'); msg.textContent = data.message || 'Could not place the order.'; return; }
+        let note = '';
+        if (proof) {
+          const up = await fetch(`/api/orders/${data.orderId}/proof?name=${encodeURIComponent(proof.name)}`, { method: 'POST', credentials: 'same-origin', body: proof });
+          if (!up.ok) note = ' Your screenshot did not upload; open your dashboard and press Upload proof.';
+        }
+        const wa = `https://wa.me/263774274544?text=${encodeURIComponent(`Hello, I have paid for ${currentItem.title} (${currentItem.item_code}), order #${data.orderId}. Please confirm and send my access code.`)}`;
+        msg.classList.add('ok');
+        msg.innerHTML = `${esc(data.message)}${esc(note)}<br><a class="wa-link" href="${wa}" target="_blank" rel="noopener">Tell the owner on WhatsApp</a> <a href="dashboard.html" style="text-decoration:underline;margin-left:8px">Open dashboard</a>`;
+      } finally { btn.disabled = false; }
     });
 
     document.getElementById('ccRedeemForm').addEventListener('submit', async (e) => {

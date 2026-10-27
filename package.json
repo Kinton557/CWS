@@ -16,7 +16,8 @@
     "express-rate-limit": "^7.4.1",
     "express-session": "^1.18.1",
     "helmet": "^8.0.0",
-    "paynow": "^1.0.2"
+    "paynow": "^1.0.2",
+    "jose": "^5.9.6"
   },
   "engines": {
     "node": ">=18"

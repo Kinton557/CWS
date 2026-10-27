@@ -152,7 +152,10 @@ function renderOrdersTable(orders, isAdmin) {
         <button type="button" class="mini-btn danger" data-order-action="delete" data-id="${o.id}">Delete</button>`;
     } else if (o.access_code) {
       actions = `<button type="button" class="mini-btn" data-use-code="${esc(o.access_code)}">Use code</button>`;
+    } else if (o.status === 'awaiting_confirmation' || o.status === 'pending') {
+      actions = `<button type="button" class="mini-btn" data-proof-upload="${o.id}">${o.proof_file ? 'Replace proof' : 'Upload proof'}</button>`;
     }
+    if (o.proof_file) actions += ` <a class="mini-btn" href="/api/orders/${o.id}/proof" target="_blank" rel="noopener">View proof</a>`;
     return `
       <tr>
         <td>#${o.id}</td>
@@ -589,3 +592,94 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (document.body.dataset.page === 'dashboard') loadDashboard();
 });
+
+
+/* ===== v2: mobile menu, Google/Apple sign-in, proof upload from dashboard ===== */
+(function () {
+  // Mobile menu
+  const container = document.querySelector('.nav-container');
+  const links = document.querySelector('.nav-links');
+  if (container && links) {
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'nav-toggle'; btn.setAttribute('aria-label', 'Menu'); btn.setAttribute('aria-expanded', 'false');
+    btn.innerHTML = '<span></span><span></span><span></span>';
+    const menu = document.createElement('div');
+    menu.className = 'mobile-menu';
+    const items = [...links.querySelectorAll('a')].map((a) => `<a href="${a.getAttribute('href')}">${a.textContent}</a>`);
+    container.querySelectorAll('.nav-actions a').forEach((a, i, all) => {
+      items.push(`<a href="${a.getAttribute('href')}"${i === all.length - 1 ? ' class="menu-cta"' : ''}>${a.textContent}</a>`);
+    });
+    menu.innerHTML = items.join('');
+    container.appendChild(btn); container.appendChild(menu);
+    btn.addEventListener('click', () => {
+      const open = menu.classList.toggle('open');
+      btn.setAttribute('aria-expanded', String(open));
+    });
+    window.addEventListener('resize', () => { if (window.innerWidth > 900) { menu.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); } });
+  }
+
+  // Google / Apple sign-in (buttons only appear when the keys are set in .env)
+  const form = document.getElementById('loginForm') || document.getElementById('signupForm');
+  if (form) {
+    fetch('/api/config').then((r) => r.json()).then((cfg) => {
+      if (!cfg.google && !cfg.apple) return;
+      const box = document.createElement('div');
+      box.className = 'social-auth';
+      form.parentNode.insertBefore(box, form);
+      const finish = async (url, payload) => {
+        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(payload) });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success) { window.location.href = nextAfterAuth(); return; }
+        setFormMessage(form, data.message || 'Sign-in failed. Please try again.', true);
+      };
+      if (cfg.google) {
+        const holder = document.createElement('div');
+        box.appendChild(holder);
+        const s = document.createElement('script');
+        s.src = 'https://accounts.google.com/gsi/client'; s.async = true;
+        s.onload = () => {
+          google.accounts.id.initialize({ client_id: cfg.google, callback: (r) => finish('/api/auth/google', { credential: r.credential }) });
+          google.accounts.id.renderButton(holder, { theme: 'filled_black', size: 'large', shape: 'pill', text: 'continue_with', width: 280 });
+        };
+        document.head.appendChild(s);
+      }
+      if (cfg.apple) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'apple-btn';
+        b.innerHTML = '&#63743; Continue with Apple';
+        box.appendChild(b);
+        const s = document.createElement('script');
+        s.src = 'https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js'; s.async = true;
+        s.onload = () => AppleID.auth.init({ clientId: cfg.apple.clientId, scope: 'name email', redirectURI: cfg.apple.redirectURI, usePopup: true });
+        document.head.appendChild(s);
+        b.addEventListener('click', async () => {
+          try {
+            const r = await AppleID.auth.signIn();
+            const n = r.user && r.user.name ? `${r.user.name.firstName || ''} ${r.user.name.lastName || ''}`.trim() : '';
+            await finish('/api/auth/apple', { id_token: r.authorization.id_token, name: n });
+          } catch (e) { /* popup closed */ }
+        });
+      }
+      const or = document.createElement('div'); or.className = 'social-or'; or.textContent = 'or use email';
+      box.appendChild(or);
+    }).catch(() => {});
+  }
+
+  // Dashboard: buyer uploads / replaces proof of payment
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-proof-upload]');
+    if (!btn) return;
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = 'image/*,.pdf';
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+      btn.disabled = true; btn.textContent = 'Uploading…';
+      const res = await fetch(`/api/orders/${btn.dataset.proofUpload}/proof?name=${encodeURIComponent(file.name)}`, { method: 'POST', credentials: 'same-origin', body: file });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) { alert(data.message || 'Upload failed.'); }
+      if (typeof refreshOrders === 'function') refreshOrders();
+    };
+    input.click();
+  });
+})();
