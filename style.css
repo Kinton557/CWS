@@ -32,8 +32,8 @@ h3{font-weight:700}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @keyframes pageIn{from{opacity:0}to{opacity:1}}
 @keyframes rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
-.js .reveal{opacity:0;transform:translateY(20px);transition:opacity .6s var(--ease),transform .6s var(--ease);transition-delay:var(--d,0s)}
-.js .reveal.in{opacity:1;transform:none}
+.reveal-on .reveal{opacity:0;transform:translateY(20px);transition:opacity .6s var(--ease),transform .6s var(--ease);transition-delay:var(--d,0s)}
+.reveal-on .reveal.in{opacity:1;transform:none}
 .bg-glow{display:none}
 
 /* layout */
@@ -345,7 +345,7 @@ input[type=checkbox]{width:auto}
 @media (max-width:520px){.services-grid,.catalog-grid,.how-list{grid-template-columns:1fr}.service{border-right:0!important;border-bottom:1px solid var(--border)}.service:last-child{border-bottom:0}.work-grid{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
-  .js .reveal{opacity:1;transform:none}
+  .reveal-on .reveal{opacity:1;transform:none}
 }
 .catalog-empty.visible{display:block}
 .auth-brand .brand-logo{height:36px}
