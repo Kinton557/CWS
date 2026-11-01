@@ -17,11 +17,6 @@ require('dotenv').config();
 
 let Paynow = null;
 try { ({ Paynow } = require('paynow')); } catch (e) { /* paynow optional */ }
-let jose = null;
-try { jose = require('jose'); } catch (e) { /* social sign-in optional */ }
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
-const APPLE_CLIENT_ID = process.env.APPLE_CLIENT_ID || '';        // Apple "Services ID"
-const APPLE_REDIRECT_URI = process.env.APPLE_REDIRECT_URI || '';  // must match the one registered with Apple
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -32,8 +27,7 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 const dataDir = path.join(__dirname, 'data');
 const deliverablesDir = path.join(__dirname, 'deliverables'); // private: only served through /api/download
 const uploadsDir = path.join(__dirname, 'uploads');           // public preview images
-const proofsDir = path.join(__dirname, 'proofs');             // private: payment screenshots, served only to owner/admin
-[dataDir, deliverablesDir, uploadsDir, proofsDir].forEach((d) => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
+[dataDir, deliverablesDir, uploadsDir].forEach((d) => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
 
 const db = new Database(path.join(dataDir, 'app.db'));
 db.pragma('journal_mode = WAL');
@@ -114,9 +108,6 @@ function addColumnIfMissing(table, column, definition) {
   'delivery TEXT DEFAULT \'Instant after payment\'', 'meta TEXT DEFAULT \'\'', 'features TEXT DEFAULT \'[]\'', 'item_code TEXT']
   .forEach((def) => addColumnIfMissing('design_posts', def.split(' ')[0], def.split(' ').slice(1).join(' ')));
 ['payment_ref TEXT', 'paid_at TEXT'].forEach((def) => addColumnIfMissing('orders', def.split(' ')[0], def.split(' ').slice(1).join(' ')));
-addColumnIfMissing('users', 'google_id', 'TEXT');
-addColumnIfMissing('users', 'apple_id', 'TEXT');
-addColumnIfMissing('orders', 'proof_file', 'TEXT');
 const legacyCols = db.prepare('PRAGMA table_info(design_posts)').all().map((c) => c.name);
 if (legacyCols.includes('access_code')) {
   db.exec("UPDATE design_posts SET item_code = access_code WHERE item_code IS NULL OR item_code = ''");
@@ -313,16 +304,54 @@ const requireAdmin = (req, res, next) => {
 /* Auth                                                                */
 /* ------------------------------------------------------------------ */
 app.get('/api/config', (req, res) => {
-  res.json({
-    success: true, ecocash: ECOCASH_NUMBER, accountName: 'Chikomborero Walter Sumairi', paynow: paynowReady,
-    google: jose && GOOGLE_CLIENT_ID ? GOOGLE_CLIENT_ID : null,
-    apple: jose && APPLE_CLIENT_ID && APPLE_REDIRECT_URI ? { clientId: APPLE_CLIENT_ID, redirectURI: APPLE_REDIRECT_URI } : null
-  });
+  res.json({ success: true, ecocash: ECOCASH_NUMBER, accountName: 'Chikomborero Walter Sumairi', paynow: paynowReady, guideAi: GUIDE_AI_READY });
 });
 
 app.get('/api/session', (req, res) => {
   const user = req.session.user || null;
   res.json({ authenticated: !!user, user });
+});
+
+/* ------------------------------------------------------------------ */
+/* CWS Guide (optional AI). Without ANTHROPIC_API_KEY the website uses */
+/* its built-in navigation assistant and never claims to be AI.        */
+/* The key lives ONLY in .env on the server - never in browser code.   */
+/* ------------------------------------------------------------------ */
+const GUIDE_KB = require('./assets/guide-kb.js');
+const GUIDE_AI_READY = Boolean(process.env.ANTHROPIC_API_KEY);
+const GUIDE_MODEL = process.env.GUIDE_MODEL || 'claude-haiku-5-5';
+const guideLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 40, standardHeaders: true, legacyHeaders: false, message: { success: false, message: 'Too many questions, please wait a few minutes.' } });
+function guideSystemPrompt() {
+  const dest = Object.keys(GUIDE_KB.dest).map((k) => `${k}: ${GUIDE_KB.dest[k].label} (${GUIDE_KB.dest[k].url})`).join('\n');
+  return 'You are CWS Guide, the assistant on the CWS Multimedia Connect website. Answer ONLY from the verified facts below; if something is not covered, say you do not have that information and suggest contacting CWS. Never invent prices, clients, awards, URLs or policies. Keep replies under 90 words, friendly and plain. If the visitor wants to be taken somewhere, end your reply with a line exactly like NAV:<key> using one key from the destinations list.\n\nFACTS:\n' + JSON.stringify({ company: GUIDE_KB.company, contact: GUIDE_KB.contact, packages: GUIDE_KB.packages, portfolio: GUIDE_KB.portfolio, payment: GUIDE_KB.payment, creativeconnect: GUIDE_KB.creativeconnect }) + '\n\nDESTINATIONS:\n' + dest;
+}
+app.post('/api/guide', guideLimiter, async (req, res) => {
+  if (!GUIDE_AI_READY) return res.status(503).json({ success: false, message: 'AI is not configured.' });
+  try {
+    const message = String((req.body && req.body.message) || '').slice(0, 400).trim();
+    if (!message) return res.status(400).json({ success: false, message: 'Empty message.' });
+    const history = (Array.isArray(req.body.history) ? req.body.history : []).slice(-8)
+      .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+      .map((m) => ({ role: m.role, content: m.content.slice(0, 600) }));
+    while (history.length && history[0].role !== 'user') history.shift();
+    if (history.length && history[history.length - 1].role === 'user' && history[history.length - 1].content === message) history.pop();
+    const messages = history.concat([{ role: 'user', content: message }]);
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: GUIDE_MODEL, max_tokens: 300, system: guideSystemPrompt(), messages })
+    });
+    if (!r.ok) throw new Error('AI status ' + r.status);
+    const data = await r.json();
+    let text = ((data.content || []).find((c) => c.type === 'text') || {}).text || '';
+    let nav = null;
+    const m = text.match(/NAV:([a-z]+)\s*$/i);
+    if (m) { text = text.replace(/\s*NAV:[a-z]+\s*$/i, '').trim(); if (GUIDE_KB.dest[m[1].toLowerCase()]) nav = m[1].toLowerCase(); }
+    res.json({ success: true, reply: text, nav });
+  } catch (error) {
+    console.error('Guide AI error:', error.message);
+    res.status(502).json({ success: false, message: 'The assistant is unavailable right now.' });
+  }
 });
 
 app.post('/api/signup', authLimiter, (req, res) => {
@@ -361,64 +390,6 @@ app.post('/api/login', authLimiter, (req, res) => {
     req.session.user = user;
     res.json({ success: true, user });
   });
-});
-
-
-/* ---------- Google / Apple sign-in ---------- */
-let googleKeys = null; let appleKeys = null;
-function finishSocialLogin(req, res, { provider, sub, email, emailVerified, name }) {
-  const col = provider === 'google' ? 'google_id' : 'apple_id';
-  let row = db.prepare(`SELECT id, name, email, role FROM users WHERE ${col} = ?`).get(sub);
-  if (!row && email && emailVerified) {
-    row = db.prepare('SELECT id, name, email, role FROM users WHERE email = ?').get(email);
-    if (row) db.prepare(`UPDATE users SET ${col} = ? WHERE id = ?`).run(sub, row.id);
-  }
-  if (!row) {
-    if (!email) return res.status(400).json({ success: false, message: 'Your account did not share an email address. Please use email sign-up instead.' });
-    const info = db.prepare(`INSERT INTO users (name, email, password_hash, role, ${col}) VALUES (?, ?, ?, 'user', ?)`)
-      .run(clean(name, 80) || email.split('@')[0], email, bcrypt.hashSync(crypto.randomBytes(24).toString('hex'), 10), sub);
-    row = db.prepare('SELECT id, name, email, role FROM users WHERE id = ?').get(info.lastInsertRowid);
-  }
-  req.session.regenerate(() => {
-    req.session.user = { id: row.id, name: row.name, email: row.email, role: row.role };
-    res.json({ success: true, user: req.session.user });
-  });
-}
-
-app.post('/api/auth/google', authLimiter, async (req, res) => {
-  try {
-    if (!jose || !GOOGLE_CLIENT_ID) return res.status(503).json({ success: false, message: 'Google sign-in is not switched on yet.' });
-    const token = String((req.body && req.body.credential) || '');
-    if (!token) return res.status(400).json({ success: false, message: 'Missing Google credential.' });
-    googleKeys = googleKeys || jose.createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
-    const { payload } = await jose.jwtVerify(token, googleKeys, {
-      issuer: ['https://accounts.google.com', 'accounts.google.com'], audience: GOOGLE_CLIENT_ID
-    });
-    finishSocialLogin(req, res, {
-      provider: 'google', sub: payload.sub, email: String(payload.email || '').toLowerCase(),
-      emailVerified: payload.email_verified === true || payload.email_verified === 'true', name: payload.name
-    });
-  } catch (error) {
-    console.error('Google sign-in error:', error.message);
-    res.status(401).json({ success: false, message: 'Google sign-in failed. Please try again.' });
-  }
-});
-
-app.post('/api/auth/apple', authLimiter, async (req, res) => {
-  try {
-    if (!jose || !APPLE_CLIENT_ID) return res.status(503).json({ success: false, message: 'Apple sign-in is not switched on yet.' });
-    const token = String((req.body && req.body.id_token) || '');
-    if (!token) return res.status(400).json({ success: false, message: 'Missing Apple token.' });
-    appleKeys = appleKeys || jose.createRemoteJWKSet(new URL('https://appleid.apple.com/auth/keys'));
-    const { payload } = await jose.jwtVerify(token, appleKeys, { issuer: 'https://appleid.apple.com', audience: APPLE_CLIENT_ID });
-    finishSocialLogin(req, res, {
-      provider: 'apple', sub: payload.sub, email: String(payload.email || '').toLowerCase(),
-      emailVerified: payload.email_verified === true || payload.email_verified === 'true', name: req.body.name
-    });
-  } catch (error) {
-    console.error('Apple sign-in error:', error.message);
-    res.status(401).json({ success: false, message: 'Apple sign-in failed. Please try again.' });
-  }
 });
 
 app.post('/api/logout', (req, res) => {
@@ -542,7 +513,7 @@ app.get('/api/orders', requireAuth, (req, res) => {
 // Create an order for a catalog item (postId) or a priced service (serviceName). Amounts are always set by the server.
 async function createOrderHandler(req, res) {
   try {
-    const { postId, serviceName, paymentMethod, phone, paymentRef, hasProof } = req.body || {};
+    const { postId, serviceName, paymentMethod, phone, paymentRef } = req.body || {};
     const method = ['ecocash_manual', 'ecocash', 'innbucks', 'zimswitch', 'paygo'].includes(paymentMethod) ? paymentMethod : 'ecocash_manual';
 
     let title; let amount; let resolvedPostId = null;
@@ -562,8 +533,8 @@ async function createOrderHandler(req, res) {
     if (!amount) return res.status(400).json({ success: false, message: 'This item has no price set yet.' });
 
     const manual = method === 'ecocash_manual';
-    if (manual && !clean(paymentRef, 60) && !hasProof) {
-      return res.status(400).json({ success: false, message: 'Enter the EcoCash reference or attach a screenshot of your payment.' });
+    if (manual && !clean(paymentRef, 60)) {
+      return res.status(400).json({ success: false, message: 'Enter the EcoCash transaction reference from your payment message.' });
     }
     if (!manual && !paynowReady) {
       return res.status(503).json({ success: false, message: `Online card/wallet checkout is not switched on yet. Pay by EcoCash to ${ECOCASH_NUMBER} and enter the reference instead.` });
@@ -610,34 +581,6 @@ async function createOrderHandler(req, res) {
 }
 app.post('/api/orders', requireAuth, createOrderHandler);
 app.post('/api/checkout', requireAuth, createOrderHandler); // used by the pricing page
-
-// Buyer uploads a screenshot / PDF of the EcoCash payment. Stored privately; only the buyer and admin can view it.
-const proofParser = express.raw({ type: () => true, limit: '8mb' });
-app.post('/api/orders/:id/proof', requireAuth, proofParser, (req, res) => {
-  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(req.params.id));
-  const user = req.session.user;
-  if (!order || (user.role !== 'admin' && order.user_id !== user.id)) return res.status(404).json({ success: false, message: 'Order not found.' });
-  if (order.status === 'paid' || order.status === 'cancelled') return res.status(400).json({ success: false, message: 'This order is already closed.' });
-  const name = safeFileName(req.query.name);
-  const ext = path.extname(name).toLowerCase();
-  if (!['.jpg', '.jpeg', '.png', '.webp', '.pdf'].includes(ext)) return res.status(400).json({ success: false, message: 'Proof must be a JPG, PNG, WEBP or PDF file.' });
-  if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ success: false, message: 'No file received.' });
-  const stored = `order${order.id}-${Date.now().toString(36)}${ext}`;
-  fs.writeFileSync(path.join(proofsDir, stored), req.body);
-  if (order.proof_file) fs.rmSync(path.join(proofsDir, path.basename(order.proof_file)), { force: true });
-  db.prepare("UPDATE orders SET proof_file = ?, status = CASE WHEN status = 'pending' THEN 'awaiting_confirmation' ELSE status END WHERE id = ?").run(stored, order.id);
-  res.json({ success: true });
-});
-
-app.get('/api/orders/:id/proof', requireAuth, (req, res) => {
-  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(req.params.id));
-  const user = req.session.user;
-  if (!order || !order.proof_file || (user.role !== 'admin' && order.user_id !== user.id)) return res.status(404).send('Not found.');
-  const file = path.join(proofsDir, path.basename(order.proof_file));
-  if (!fs.existsSync(file)) return res.status(404).send('Not found.');
-  res.sendFile(file);
-});
-
 
 app.patch('/api/admin/orders/:id', requireAuth, requireAdmin, (req, res) => {
   const id = Number(req.params.id);
@@ -814,7 +757,7 @@ app.use((req, res, next) => {
   const first = requested.split('/')[1] || '';
   if (requested === '/' || requested.startsWith('/api/')) return next();
   if (requested.split('/').some((seg) => seg.startsWith('.'))) return res.status(404).send('Not found');
-  if (['data', 'deliverables', 'proofs', 'node_modules'].includes(first)) return res.status(404).send('Not found');
+  if (['data', 'deliverables', 'node_modules'].includes(first)) return res.status(404).send('Not found');
   if (PRIVATE_FILES.has(path.basename(requested))) return res.status(404).send('Not found');
   if (!PUBLIC_EXT.has(path.extname(requested).toLowerCase())) return res.status(404).send('Not found');
   next();

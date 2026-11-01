@@ -21,16 +21,7 @@ const STATUS_LABEL = { awaiting_confirmation: 'awaiting confirmation', pending: 
 const statusPill = (s) => `<span class="status-pill ${esc(s)}">${esc(STATUS_LABEL[s] || s)}</span>`;
 
 /* ---------- Logo (transparent PNG, white for the dark site) ---------- */
-document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('.logo').forEach((logo) => {
-    if (logo.querySelector('img.site-logo')) return;
-    const img = document.createElement('img');
-    img.src = 'cws-logo-white.png';
-    img.alt = 'CWS Multimedia Connect';
-    img.className = 'site-logo';
-    logo.prepend(img);
-  });
-});
+/* Logo is now an inline SVG-masked element in each page header (see style.css .brand-logo). */
 
 /* ---------- Payment config (EcoCash tag etc.) ---------- */
 let siteConfig = { ecocash: '0774274544', accountName: 'Chikomborero Walter Sumairi', paynow: false };
@@ -152,10 +143,7 @@ function renderOrdersTable(orders, isAdmin) {
         <button type="button" class="mini-btn danger" data-order-action="delete" data-id="${o.id}">Delete</button>`;
     } else if (o.access_code) {
       actions = `<button type="button" class="mini-btn" data-use-code="${esc(o.access_code)}">Use code</button>`;
-    } else if (o.status === 'awaiting_confirmation' || o.status === 'pending') {
-      actions = `<button type="button" class="mini-btn" data-proof-upload="${o.id}">${o.proof_file ? 'Replace proof' : 'Upload proof'}</button>`;
     }
-    if (o.proof_file) actions += ` <a class="mini-btn" href="/api/orders/${o.id}/proof" target="_blank" rel="noopener">View proof</a>`;
     return `
       <tr>
         <td>#${o.id}</td>
@@ -169,16 +157,93 @@ function renderOrdersTable(orders, isAdmin) {
 }
 
 function invoiceHtml(inv) {
-  const rows = inv.items.map((i) => `<tr><td>${esc(i.desc)}</td><td style="text-align:center">${esc(i.qty)}</td><td style="text-align:right">${money(i.price)}</td><td style="text-align:right">${money(i.qty * i.price)}</td></tr>`).join('');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(inv.invoice_no)}</title>
-  <style>body{font-family:Arial,sans-serif;color:#111;max-width:760px;margin:30px auto;padding:0 20px}h1{margin:0}table{width:100%;border-collapse:collapse;margin-top:24px}th,td{border-bottom:1px solid #ddd;padding:10px 6px;text-align:left}th{background:#f3f3f3}.total{text-align:right;font-size:1.3rem;margin-top:18px}.meta{display:flex;justify-content:space-between;margin-top:24px;gap:20px}.badge{display:inline-block;padding:3px 10px;border:1px solid #111;border-radius:99px;text-transform:uppercase;font-size:.75rem}small{color:#555}</style></head>
-  <body><img src="cws-logo-dark.png" alt="CWS Multimedia Connect" style="height:60px"><h1>INVOICE ${esc(inv.invoice_no)}</h1>
-  <div class="meta"><div><strong>From</strong><br>Chikomborero Walter Sumairi<br>CWS Multimedia Connect<br>Kadoma, Zimbabwe<br>+263 77 427 4544<br>chikomborerowaltersumairi26@gmail.com</div>
-  <div><strong>Billed to</strong><br>${esc(inv.client_name)}<br>${esc(inv.client_email)}<br><br>Date: ${esc(String(inv.created_at || '').slice(0, 10))}<br>Due: ${esc(inv.due_date || '')}<br><span class="badge">${esc(inv.status)}</span></div></div>
-  <table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Amount</th></tr></thead><tbody>${rows}</tbody></table>
-  <div class="total"><strong>Total: ${money(inv.total)}</strong></div>
-  <p><strong>Payment:</strong> EcoCash ${esc(siteConfig.ecocash)} (Chikomborero Walter Sumairi)</p>${inv.notes ? `<p><small>${esc(inv.notes)}</small></p>` : ''}
-  <script>window.onload=function(){window.print()}<\/script></body></html>`;
+  const items = inv.items || [];
+  const rows = items.map((i, n) => `<tr><td class="c n">${n + 1}</td><td class="d">${esc(i.desc)}</td><td class="c">${esc(i.qty)}</td><td class="r">${money(i.price)}</td><td class="r a">${money(i.qty * i.price)}</td></tr>`).join('');
+  const pad = Array.from({ length: Math.max(0, 6 - items.length) }, () => '<tr class="blank"><td></td><td></td><td></td><td></td><td></td></tr>').join('');
+  const subtotal = items.reduce((t, i) => t + Number(i.qty) * Number(i.price), 0);
+  const status = String(inv.status || 'unpaid');
+  const origin = location.origin;
+  const date = esc(String(inv.created_at || '').slice(0, 10));
+  const paid = status === 'paid';
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Invoice ${esc(inv.invoice_no)} | CWS Multimedia Connect</title>
+<style>
+@page{size:A4;margin:0}*{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+:root{--ink:#0f1218;--ink2:#1b2330;--g:#3ddc97;--gd:#12805a;--soft:#eaf8f1;--line:#d9dfe4;--mut:#5b6672}
+body{font-family:'Montserrat',Arial,sans-serif;background:#e8ebee;color:var(--ink);font-size:12px;line-height:1.5}
+.sheet{position:relative;display:flex;flex-direction:column;width:210mm;min-height:297mm;margin:12px auto;background:#fff;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.15)}
+.top{position:relative;background:var(--ink);color:#fff;height:132px;padding:26px 34px;border-bottom-right-radius:0}
+.top img.logo{height:44px;display:block;position:relative;z-index:2}
+.top .tag{position:relative;z-index:2;margin-top:10px;font-size:9.5px;letter-spacing:.3em;color:var(--g);font-weight:700}
+.top .sw{position:absolute;left:0;top:0;width:100%;height:100%}
+.top h1{position:absolute;right:34px;top:30px;z-index:2;font-size:46px;letter-spacing:.04em;font-weight:900;line-height:1}
+.top .no{position:absolute;right:34px;top:84px;z-index:2;font-size:12px;letter-spacing:.2em;color:var(--g);font-weight:700}
+.stripe{height:7px;background:linear-gradient(90deg,var(--g) 0 38%,#fff 38% 40%,var(--ink2) 40% 78%,#fff 78% 80%,var(--g) 80%)}
+.pad{padding:22px 34px 0}
+.parties{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+.box{border:1.5px solid var(--ink)}
+.box h4{background:var(--ink);color:#fff;font-size:10px;letter-spacing:.2em;text-transform:uppercase;padding:6px 12px}
+.box div{padding:5px 12px;border-top:1px solid var(--line);font-weight:600}.box div:first-of-type{border-top:0}.box div small{display:inline-block;min-width:54px;color:var(--mut);font-weight:700;font-size:9px;letter-spacing:.1em;text-transform:uppercase}
+.meta{margin:20px auto 0;width:88%;background:var(--ink);border-radius:14px;padding:9px;display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;box-shadow:0 0 0 3px var(--soft)}
+.meta p{display:flex;gap:0;align-items:stretch}.meta b{flex:1;color:#fff;font-size:10.5px;padding:6px 10px;letter-spacing:.04em}.meta span{flex:1.1;background:#fff;color:var(--ink);font-weight:800;text-align:center;padding:6px;font-size:11.5px;text-transform:uppercase}
+table{width:100%;border-collapse:collapse;margin-top:22px}
+th{background:var(--ink);color:#fff;font-size:10px;letter-spacing:.14em;text-transform:uppercase;padding:9px 8px}
+td{padding:8px;border:1px solid var(--line);font-weight:600}
+tbody tr:nth-child(even) td{background:#f6f9f8}
+td.c,th.c{text-align:center}td.r{text-align:right}td.n{width:34px;color:var(--gd)}td.d{width:44%;text-align:left;font-weight:700}tr.blank td{height:26px}
+.lower{display:grid;grid-template-columns:1fr 250px;gap:26px;margin-top:0}
+.notes{padding-top:14px;color:var(--mut)}.notes h5{color:var(--ink);font-size:10px;letter-spacing:.18em;text-transform:uppercase;margin-bottom:5px}
+.tot div{display:flex;justify-content:space-between;padding:8px 12px;font-weight:700;border:1px solid var(--line);border-top:0}
+.tot div.h{background:var(--ink);color:#fff;border-color:var(--ink);letter-spacing:.14em;font-size:10px;text-transform:uppercase}
+.tot div.due{background:var(--g);color:var(--ink);font-size:14px;font-weight:900;border-color:var(--g);letter-spacing:.04em}
+.pay{margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:0;border:1.5px solid var(--ink)}
+.pay h4{grid-column:1/-1;background:var(--soft);border-bottom:1.5px solid var(--ink);padding:7px 12px;font-size:10px;letter-spacing:.2em;text-transform:uppercase}
+.pay div{padding:7px 12px;font-weight:700}.pay div small{display:block;color:var(--mut);font-size:9px;letter-spacing:.12em;text-transform:uppercase}
+.terms{margin-top:14px;font-size:10.5px;color:var(--mut);border-left:3px solid var(--g);padding-left:10px}
+.sign{margin:36px 34px 0 auto;width:210px;border-top:1.5px solid var(--ink);text-align:center;padding-top:6px;font-weight:800;font-size:11px;letter-spacing:.06em}
+.foot{margin-top:auto;padding-top:26px;text-align:center}
+.foot .addr{font-weight:800;font-size:11px;padding:12px 34px;border-top:2px solid var(--ink)}
+.foot .ty{background:var(--ink);color:#fff;font-size:10px;letter-spacing:.24em;font-weight:700;padding:9px;border-top:4px solid var(--g)}
+.stamp{position:absolute;left:70px;top:612px;transform:rotate(-14deg);border:4px solid var(--gd);color:var(--gd);font-weight:900;font-size:34px;letter-spacing:.14em;padding:2px 16px;border-radius:8px;opacity:.28}
+.corner{position:absolute;left:-40px;bottom:96px;width:130px;height:130px;border:2px solid var(--g);border-radius:50%;opacity:.35}
+.print-bar{position:fixed;right:14px;top:12px;display:flex;gap:8px}.print-bar button{background:var(--ink);color:#fff;border:0;border-radius:6px;padding:9px 16px;font-weight:700;cursor:pointer}
+@media print{body{background:#fff}.sheet{margin:0;box-shadow:none}.print-bar{display:none}}
+@media (max-width:820px){.sheet{width:100%}}
+</style></head><body>
+<div class="print-bar"><button onclick="window.print()">Print / Save PDF</button></div>
+<div class="sheet">
+ <header class="top">
+  <svg class="sw" viewBox="0 0 800 132" preserveAspectRatio="none" aria-hidden="true"><path d="M330 132C420 100 520 40 640 0" fill="none" stroke="#3ddc97" stroke-width="3"/><path d="M300 132C400 105 500 55 600 0" fill="none" stroke="#fff" stroke-width="1.5" opacity=".6"/><path d="M360 132C450 95 540 30 680 0" fill="none" stroke="#5b6672" stroke-width="1.5"/></svg>
+  <img class="logo" src="${origin}/assets/cws-logo-white.svg" alt="CWS Multimedia Connect">
+  <div class="tag">CONNECTING THE WORLD AS ONE</div>
+  <h1>INVOICE</h1><div class="no">${esc(inv.invoice_no)}</div>
+ </header>
+ <div class="stripe"></div>
+ <div class="pad">
+  <section class="parties">
+   <div class="box"><h4>Billed to</h4><div>${esc(inv.client_name)}</div><div><small>Email</small> ${esc(inv.client_email || '-')}</div></div>
+   <div class="box"><h4>From</h4><div>CWS Multimedia Connect</div><div><small>Owner</small> Chikomborero Walter Sumairi</div><div><small>Phone</small> +263 77 427 4544</div></div>
+  </section>
+  <section class="meta">
+   <p><b>Invoice No.</b><span>${esc(inv.invoice_no)}</span></p><p><b>Status</b><span>${esc(status.replace('_', ' '))}</span></p>
+   <p><b>Invoice Date</b><span>${date}</span></p><p><b>Due Date</b><span>${esc(inv.due_date || '-')}</span></p>
+  </section>
+  <table><thead><tr><th class="c">No.</th><th>Description</th><th class="c">Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${rows}${pad}</tbody></table>
+  <section class="lower">
+   <div class="notes"><h5>Notes</h5>${inv.notes ? esc(inv.notes) : 'Please include the invoice number in your payment reference.'}</div>
+   <div class="tot"><div class="h"><span>Subtotal</span><span>${money(subtotal)}</span></div><div class="due"><span>AMOUNT DUE</span><span>${money(inv.total)}</span></div></div>
+  </section>
+  <section class="pay"><h4>Make all payments to</h4>
+   <div><small>Account name</small>Chikomborero Walter Sumairi</div><div><small>EcoCash</small>${esc((typeof siteConfig !== 'undefined' && siteConfig.ecocash) || '0774274544')}</div>
+  </section>
+  <p class="terms">Please include the invoice number in your payment reference. Questions? WhatsApp or call +263 77 427 4544.</p>
+ </div>
+ <div class="sign">Authorized Sign.</div>
+ <div class="corner"></div>
+ ${paid ? '<div class="stamp">PAID</div>' : ''}
+ <footer class="foot"><div class="addr">Kadoma, Zimbabwe &bull; Phone +263 77 427 4544 &bull; chikomborerowaltersumairi26@gmail.com</div><div class="ty">THANK YOU! WE APPRECIATE YOUR BUSINESS</div></footer>
+</div>
+<script>window.addEventListener('load',function(){setTimeout(function(){window.print()},500)})<\/script>
+</body></html>`;
 }
 
 function printInvoice(id) {
@@ -592,94 +657,3 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (document.body.dataset.page === 'dashboard') loadDashboard();
 });
-
-
-/* ===== v2: mobile menu, Google/Apple sign-in, proof upload from dashboard ===== */
-(function () {
-  // Mobile menu
-  const container = document.querySelector('.nav-container');
-  const links = document.querySelector('.nav-links');
-  if (container && links) {
-    const btn = document.createElement('button');
-    btn.type = 'button'; btn.className = 'nav-toggle'; btn.setAttribute('aria-label', 'Menu'); btn.setAttribute('aria-expanded', 'false');
-    btn.innerHTML = '<span></span><span></span><span></span>';
-    const menu = document.createElement('div');
-    menu.className = 'mobile-menu';
-    const items = [...links.querySelectorAll('a')].map((a) => `<a href="${a.getAttribute('href')}">${a.textContent}</a>`);
-    container.querySelectorAll('.nav-actions a').forEach((a, i, all) => {
-      items.push(`<a href="${a.getAttribute('href')}"${i === all.length - 1 ? ' class="menu-cta"' : ''}>${a.textContent}</a>`);
-    });
-    menu.innerHTML = items.join('');
-    container.appendChild(btn); container.appendChild(menu);
-    btn.addEventListener('click', () => {
-      const open = menu.classList.toggle('open');
-      btn.setAttribute('aria-expanded', String(open));
-    });
-    window.addEventListener('resize', () => { if (window.innerWidth > 900) { menu.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); } });
-  }
-
-  // Google / Apple sign-in (buttons only appear when the keys are set in .env)
-  const form = document.getElementById('loginForm') || document.getElementById('signupForm');
-  if (form) {
-    fetch('/api/config').then((r) => r.json()).then((cfg) => {
-      if (!cfg.google && !cfg.apple) return;
-      const box = document.createElement('div');
-      box.className = 'social-auth';
-      form.parentNode.insertBefore(box, form);
-      const finish = async (url, payload) => {
-        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(payload) });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.success) { window.location.href = nextAfterAuth(); return; }
-        setFormMessage(form, data.message || 'Sign-in failed. Please try again.', true);
-      };
-      if (cfg.google) {
-        const holder = document.createElement('div');
-        box.appendChild(holder);
-        const s = document.createElement('script');
-        s.src = 'https://accounts.google.com/gsi/client'; s.async = true;
-        s.onload = () => {
-          google.accounts.id.initialize({ client_id: cfg.google, callback: (r) => finish('/api/auth/google', { credential: r.credential }) });
-          google.accounts.id.renderButton(holder, { theme: 'filled_black', size: 'large', shape: 'pill', text: 'continue_with', width: 280 });
-        };
-        document.head.appendChild(s);
-      }
-      if (cfg.apple) {
-        const b = document.createElement('button');
-        b.type = 'button'; b.className = 'apple-btn';
-        b.innerHTML = '&#63743; Continue with Apple';
-        box.appendChild(b);
-        const s = document.createElement('script');
-        s.src = 'https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js'; s.async = true;
-        s.onload = () => AppleID.auth.init({ clientId: cfg.apple.clientId, scope: 'name email', redirectURI: cfg.apple.redirectURI, usePopup: true });
-        document.head.appendChild(s);
-        b.addEventListener('click', async () => {
-          try {
-            const r = await AppleID.auth.signIn();
-            const n = r.user && r.user.name ? `${r.user.name.firstName || ''} ${r.user.name.lastName || ''}`.trim() : '';
-            await finish('/api/auth/apple', { id_token: r.authorization.id_token, name: n });
-          } catch (e) { /* popup closed */ }
-        });
-      }
-      const or = document.createElement('div'); or.className = 'social-or'; or.textContent = 'or use email';
-      box.appendChild(or);
-    }).catch(() => {});
-  }
-
-  // Dashboard: buyer uploads / replaces proof of payment
-  document.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-proof-upload]');
-    if (!btn) return;
-    const input = document.createElement('input');
-    input.type = 'file'; input.accept = 'image/*,.pdf';
-    input.onchange = async () => {
-      const file = input.files[0];
-      if (!file) return;
-      btn.disabled = true; btn.textContent = 'Uploading…';
-      const res = await fetch(`/api/orders/${btn.dataset.proofUpload}/proof?name=${encodeURIComponent(file.name)}`, { method: 'POST', credentials: 'same-origin', body: file });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) { alert(data.message || 'Upload failed.'); }
-      if (typeof refreshOrders === 'function') refreshOrders();
-    };
-    input.click();
-  });
-})();
