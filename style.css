@@ -349,3 +349,17 @@ input[type=checkbox]{width:auto}
 }
 .catalog-empty.visible{display:block}
 .auth-brand .brand-logo{height:36px}
+
+/* admin extras */
+.admin-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:8px}
+.ai-stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px}
+.ai-stat strong{display:block;font-size:1.6rem;font-weight:800;letter-spacing:-.03em}
+.ai-stat span{color:var(--muted);font-size:.8rem}
+.ai-bars{display:flex;align-items:flex-end;gap:10px;height:170px;padding:18px 8px 0}
+.ai-bar{flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;font-size:.7rem;color:var(--muted)}
+.ai-bar i{display:block;width:100%;max-width:46px;background:var(--accent);border-radius:4px 4px 0 0;min-height:2px}
+.ai-bar b{color:var(--text);font-weight:600}
+.ai-feed{list-style:none;padding:6px 4px;display:grid;gap:10px;font-size:.88rem}
+.ai-feed small{color:var(--muted);margin-right:8px}
+.ai-filter{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
+.ai-filter input,.ai-filter select{background:var(--surface);border:1px solid var(--border-strong);border-radius:4px;padding:10px 12px;min-width:0;flex:1 1 160px}
