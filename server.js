@@ -759,7 +759,7 @@ app.post('/api/redeem', requireAuth, (req, res) => {
   res.json({
     success: true,
     item: { title: post.title, item_code: post.item_code, format: post.format },
-    downloadUrl: `${API_URL}/api/download/${encodeURIComponent(order.access_code)}`
+    downloadUrl: `/api/download/${encodeURIComponent(order.access_code)}`
   });
 });
 
