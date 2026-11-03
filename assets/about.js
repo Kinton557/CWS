@@ -6,6 +6,7 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   };
+  var src = function (p) { return /^uploads\//.test(p || '') ? (window.CWS_API || '') + '/' + p : p; };
   var initials = function (n) {
     return String(n || 'CWS').trim().split(/\s+/).slice(0, 2).map(function (w) { return w.charAt(0); }).join('').toUpperCase() || 'CWS';
   };
@@ -22,7 +23,7 @@
     }).then(function (r) { return r.json(); });
   }
   function logoOrInitials(b) {
-    return b.logo ? '<img src="' + esc(b.logo) + '" alt="" loading="lazy" />' : '<span>' + esc(initials(b.name)) + '</span>';
+    return b.logo ? '<img src="' + esc(src(b.logo)) + '" alt="" loading="lazy" />' : '<span>' + esc(initials(b.name)) + '</span>';
   }
 
   /* ---------------- Public About page ---------------- */
@@ -60,7 +61,7 @@
 
   function paintPhoto(path) {
     $('abPhoto').value = path || '';
-    $('abPhotoPreview').innerHTML = path ? '<img src="' + esc(path) + '" alt="Photo preview" />' : '<span>' + esc(initials($('abName').value)) + '</span>';
+    $('abPhotoPreview').innerHTML = path ? '<img src="' + esc(src(path)) + '" alt="Photo preview" />' : '<span>' + esc(initials($('abName').value)) + '</span>';
   }
   function paintBrandLogo(path) {
     $('brLogo').value = path || '';
