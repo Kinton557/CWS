@@ -45,6 +45,26 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS about_profile (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    name TEXT DEFAULT '',
+    role TEXT DEFAULT '',
+    bio TEXT DEFAULT '',
+    photo TEXT DEFAULT '',
+    location TEXT DEFAULT '',
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS brands (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    tagline TEXT DEFAULT '',
+    url TEXT DEFAULT '',
+    logo TEXT DEFAULT '',
+    sort_order INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS design_posts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     item_code TEXT UNIQUE,
@@ -304,7 +324,7 @@ const requireAdmin = (req, res, next) => {
 /* Auth                                                                */
 /* ------------------------------------------------------------------ */
 app.get('/api/config', (req, res) => {
-  res.json({ success: true, ecocash: ECOCASH_NUMBER, accountName: 'Chikomborero Walter Sumairi', paynow: paynowReady, guideAi: GUIDE_AI_READY });
+  res.json({ success: true, firebase: Boolean(process.env.FIREBASE_PROJECT_ID), ecocash: ECOCASH_NUMBER, accountName: 'Chikomborero Walter Sumairi', paynow: paynowReady, guideAi: GUIDE_AI_READY });
 });
 
 app.get('/api/session', (req, res) => {
@@ -354,6 +374,45 @@ app.post('/api/guide', guideLimiter, async (req, res) => {
   }
 });
 
+/* ------------------------------------------------------------------ */
+/* Firebase sign-in: the browser signs in with Firebase, the server    */
+/* verifies the ID token and opens its own session (orders, invoices,  */
+/* admin rights stay in SQLite). Needs FIREBASE_PROJECT_ID in .env.    */
+/* ------------------------------------------------------------------ */
+let fbAdmin = null;
+if (process.env.FIREBASE_PROJECT_ID) {
+  try {
+    fbAdmin = require('firebase-admin');
+    fbAdmin.initializeApp({ projectId: process.env.FIREBASE_PROJECT_ID });
+  } catch (e) { console.warn('Firebase disabled (run npm install):', e.message); fbAdmin = null; }
+}
+
+app.post('/api/auth/firebase', authLimiter, async (req, res) => {
+  if (!fbAdmin) return res.status(503).json({ success: false, message: 'Firebase sign-in is not set up on the server.' });
+  try {
+    const decoded = await fbAdmin.auth().verifyIdToken(String((req.body && req.body.idToken) || ''));
+    const email = String(decoded.email || '').trim().toLowerCase();
+    if (!email) return res.status(400).json({ success: false, message: 'This account has no email address.' });
+    // The admin account is only released to a verified email, so nobody can claim it by signing up first.
+    if (email === adminEmail && !decoded.email_verified) {
+      return res.status(403).json({ success: false, message: 'Please verify your email first (check your inbox for the Firebase link), then log in again.' });
+    }
+    let user = db.prepare('SELECT id, name, email, role FROM users WHERE email = ?').get(email);
+    if (!user) {
+      const name = clean((req.body && req.body.name) || decoded.name || email.split('@')[0], 80) || 'Customer';
+      const r = db.prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)')
+        .run(name, email, bcrypt.hashSync(crypto.randomBytes(24).toString('hex'), 10), email === adminEmail ? 'admin' : 'user');
+      user = db.prepare('SELECT id, name, email, role FROM users WHERE id = ?').get(r.lastInsertRowid);
+    }
+    req.session.regenerate(() => {
+      req.session.user = user;
+      res.json({ success: true, user });
+    });
+  } catch (e) {
+    res.status(401).json({ success: false, message: 'Sign-in could not be verified. Please try again.' });
+  }
+});
+
 app.post('/api/signup', authLimiter, (req, res) => {
   const name = clean(req.body && req.body.name, 80);
   const email = clean(req.body && req.body.email, 120).toLowerCase();
@@ -397,6 +456,73 @@ app.post('/api/logout', (req, res) => {
     res.clearCookie('cws_sid');
     res.json({ success: true });
   });
+});
+
+/* ------------------------------------------------------------------ */
+/* About page: owner profile + other brands (editable by admin)        */
+/* ------------------------------------------------------------------ */
+const cleanText = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
+const cleanImage = (v) => {
+  const x = String(v || '').trim();
+  return /^(uploads\/[A-Za-z0-9._ -]+|https:\/\/[^\s"'<>]+)$/.test(x) ? x : '';
+};
+const cleanUrl = (v) => {
+  const x = String(v || '').trim();
+  if (!x) return '';
+  return /^https?:\/\/[^\s"'<>]+$/i.test(x) ? x : null; // null = invalid
+};
+
+app.get('/api/about', (req, res) => {
+  const profile = db.prepare('SELECT name, role, bio, photo, location FROM about_profile WHERE id = 1').get() || null;
+  const brands = db.prepare('SELECT id, name, tagline, url, logo FROM brands ORDER BY sort_order ASC, id ASC').all();
+  res.json({ success: true, profile, brands });
+});
+
+app.put('/api/admin/about', requireAuth, requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const photo = b.photo ? cleanImage(b.photo) : '';
+  if (b.photo && !photo) return res.status(400).json({ success: false, message: 'Photo must be an uploaded image.' });
+  db.prepare(`
+    INSERT INTO about_profile (id, name, role, bio, photo, location, updated_at)
+    VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET name = excluded.name, role = excluded.role, bio = excluded.bio,
+      photo = excluded.photo, location = excluded.location, updated_at = CURRENT_TIMESTAMP
+  `).run(cleanText(b.name, 120), cleanText(b.role, 160), cleanText(b.bio, 4000), photo, cleanText(b.location, 120));
+  res.json({ success: true });
+});
+
+function readBrand(body) {
+  const b = body || {};
+  const name = cleanText(b.name, 120);
+  if (!name) return { error: 'Brand name is required.' };
+  const url = cleanUrl(b.url);
+  if (url === null) return { error: 'Website link must start with http:// or https://' };
+  const logo = b.logo ? cleanImage(b.logo) : '';
+  if (b.logo && !logo) return { error: 'Logo must be an uploaded image.' };
+  return { name, tagline: cleanText(b.tagline, 240), url, logo };
+}
+
+app.post('/api/admin/brands', requireAuth, requireAdmin, (req, res) => {
+  const v = readBrand(req.body);
+  if (v.error) return res.status(400).json({ success: false, message: v.error });
+  const max = db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM brands').get().m;
+  const r = db.prepare('INSERT INTO brands (name, tagline, url, logo, sort_order) VALUES (?, ?, ?, ?, ?)')
+    .run(v.name, v.tagline, v.url, v.logo, max + 1);
+  res.status(201).json({ success: true, id: r.lastInsertRowid });
+});
+
+app.put('/api/admin/brands/:id', requireAuth, requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!db.prepare('SELECT id FROM brands WHERE id = ?').get(id)) return res.status(404).json({ success: false, message: 'Brand not found.' });
+  const v = readBrand(req.body);
+  if (v.error) return res.status(400).json({ success: false, message: v.error });
+  db.prepare('UPDATE brands SET name = ?, tagline = ?, url = ?, logo = ? WHERE id = ?').run(v.name, v.tagline, v.url, v.logo, id);
+  res.json({ success: true });
+});
+
+app.delete('/api/admin/brands/:id', requireAuth, requireAdmin, (req, res) => {
+  db.prepare('DELETE FROM brands WHERE id = ?').run(Number(req.params.id));
+  res.json({ success: true });
 });
 
 /* ------------------------------------------------------------------ */

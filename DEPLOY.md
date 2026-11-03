@@ -6,3 +6,20 @@
 4. **Domain (later today)**: point the domain's DNS to the host, enable HTTPS, then set `BASE_URL` to `https://your-domain`.
 5. **CWS Guide AI (optional)**: add `ANTHROPIC_API_KEY` to `.env` and restart. Visitors then get AI answers grounded in `assets/guide-kb.js`; without it the Guide is a navigation assistant.
 6. Never upload `.env`, `data/` or `deliverables/` publicly.
+
+## Custom domain (login only works on onrender.com?)
+Sign-in, sign-up and the admin dashboard are handled by this Node server (sessions + SQLite). There is no Firebase. They only work on a domain that points to the Node host (Render).
+The `CNAME` file in this repo is for GitHub Pages, which is static-only: if cwsmultimediaconnect.co.zw points there, pages load but `/api/login` and `/api/signup` fail.
+Fix: Render dashboard > your service > Settings > Custom Domains > add `cwsmultimediaconnect.co.zw` (and `www.`), then set the DNS records Render shows at your .co.zw registrar, remove any GitHub Pages / old A records, wait for the HTTPS certificate, and set `BASE_URL=https://cwsmultimediaconnect.co.zw` in Render environment variables.
+Also keep `NODE_ENV=production` so the secure session cookie works behind Render's proxy.
+Uploaded photos live in `uploads/` and the database in `data/`: attach a Render persistent disk (or they are wiped on each redeploy).
+
+## Firebase sign-in (optional, recommended)
+Firebase checks the passwords and sends verification and reset emails. The server still keeps the session, orders, invoices and admin rights.
+1. console.firebase.google.com > your project (or Add project) > Build > Authentication > Get started > Sign-in method > turn on **Email/Password**.
+2. Authentication > Settings > **Authorized domains**: add `cwsmultimediaconnect.co.zw`, `www.cwsmultimediaconnect.co.zw` and `cws-main.onrender.com` (localhost is already there).
+3. Project settings > General > Your apps > add a **Web app** > copy `apiKey`, `authDomain`, `projectId`, `appId` into `assets/firebase-config.js`. These values are public and safe to commit.
+4. In Render > Environment add `FIREBASE_PROJECT_ID` (same projectId), then redeploy so `npm install` fetches `firebase-admin`.
+5. The admin must verify the email (`ADMIN_EMAIL`) once: sign up on the site with that email, open the Firebase verification email, then log in. Until then the admin account is refused on purpose.
+Free Spark plan is enough. The domain must still point to Render, because Firebase only handles passwords, not your orders and dashboard.
+If `apiKey` is empty the old email + password login keeps working.

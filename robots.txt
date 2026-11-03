@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://cwsmultimediaconnect.co.zw/sitemap.xml

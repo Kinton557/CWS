@@ -12,3 +12,8 @@ Photos recompressed under the same filenames (7.5 MB -> about 4 MB).
 
 ## Not changed
 Auth, orders, EcoCash/Paynow logic, invoices API, database, catalog data, all page content and prices.
+
+## Latest
+- Accent colour is grey (light grey on the dark theme, dark grey on the light theme). WhatsApp buttons stay green.
+- About page: owner photo, name, role and bio plus an "Our other brands" grid, all editable in Dashboard > About page: owner and brands (admin only). New: assets/about.js, /api/about, /api/admin/about, /api/admin/brands.
+- Firebase Authentication for login, signup and password reset (assets/firebase-config.js, assets/firebase-auth.js, POST /api/auth/firebase). Old login stays as fallback until the config is filled in.

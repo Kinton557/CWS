@@ -92,9 +92,26 @@ async function submitAuth(form, endpoint, payload, busyText, idleText, okText) {
   const button = form.querySelector('button[type="submit"]');
   if (button) { button.disabled = true; button.textContent = busyText; }
   setFormMessage(form, '', false);
+  const fb = window.cwsFirebase && window.cwsFirebase.enabled ? window.cwsFirebase : null;
   try {
-    const { response, data } = await fetchJson(endpoint, { method: 'POST', body: JSON.stringify(payload) });
+    let result;
+    if (fb) {
+      // Firebase checks the password; our server then opens the session from the verified token.
+      const isSignup = endpoint === '/api/signup';
+      let idToken;
+      try {
+        idToken = isSignup ? await fb.signUp(payload.name, payload.email, payload.password) : await fb.signIn(payload.email, payload.password);
+      } catch (err) {
+        setFormMessage(form, fb.explain(err), true);
+        return;
+      }
+      result = await fetchJson('/api/auth/firebase', { method: 'POST', body: JSON.stringify({ idToken, name: payload.name }) });
+    } else {
+      result = await fetchJson(endpoint, { method: 'POST', body: JSON.stringify(payload) });
+    }
+    const { response, data } = result;
     if (!response.ok || !data.success) {
+      if (fb) fb.signOut();
       setFormMessage(form, data.message || 'Something went wrong. Please try again.', true);
       return;
     }
@@ -168,7 +185,7 @@ function invoiceHtml(inv) {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Invoice ${esc(inv.invoice_no)} | CWS Multimedia Connect</title>
 <style>
 @page{size:A4;margin:0}*{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-:root{--ink:#0f1218;--ink2:#1b2330;--g:#3ddc97;--gd:#12805a;--soft:#eaf8f1;--line:#d9dfe4;--mut:#5b6672}
+:root{--ink:#0f1218;--ink2:#1b2330;--g:#c3c9d1;--gd:#4b5563;--soft:#eef0f2;--line:#d9dfe4;--mut:#5b6672}
 body{font-family:'Montserrat',Arial,sans-serif;background:#e8ebee;color:var(--ink);font-size:12px;line-height:1.5}
 .sheet{position:relative;display:flex;flex-direction:column;width:210mm;min-height:297mm;margin:12px auto;background:#fff;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.15)}
 .top{position:relative;background:var(--ink);color:#fff;height:132px;padding:26px 34px;border-bottom-right-radius:0}
@@ -212,7 +229,7 @@ td.c,th.c{text-align:center}td.r{text-align:right}td.n{width:34px;color:var(--gd
 <div class="print-bar"><button onclick="window.print()">Print / Save PDF</button></div>
 <div class="sheet">
  <header class="top">
-  <svg class="sw" viewBox="0 0 800 132" preserveAspectRatio="none" aria-hidden="true"><path d="M330 132C420 100 520 40 640 0" fill="none" stroke="#3ddc97" stroke-width="3"/><path d="M300 132C400 105 500 55 600 0" fill="none" stroke="#fff" stroke-width="1.5" opacity=".6"/><path d="M360 132C450 95 540 30 680 0" fill="none" stroke="#5b6672" stroke-width="1.5"/></svg>
+  <svg class="sw" viewBox="0 0 800 132" preserveAspectRatio="none" aria-hidden="true"><path d="M330 132C420 100 520 40 640 0" fill="none" stroke="#c3c9d1" stroke-width="3"/><path d="M300 132C400 105 500 55 600 0" fill="none" stroke="#fff" stroke-width="1.5" opacity=".6"/><path d="M360 132C450 95 540 30 680 0" fill="none" stroke="#5b6672" stroke-width="1.5"/></svg>
   <img class="logo" src="${origin}/assets/cws-logo-white.svg" alt="CWS Multimedia Connect">
   <div class="tag">CONNECTING THE WORLD AS ONE</div>
   <h1>INVOICE</h1><div class="no">${esc(inv.invoice_no)}</div>
@@ -611,7 +628,7 @@ document.addEventListener('DOMContentLoaded', () => {
           statusMsg.innerHTML = 'Please <a href="login.html?next=pricing.html" style="text-decoration:underline">sign in</a> or <a href="signup.html" style="text-decoration:underline">create an account</a> first.';
         } else if (data.success) {
           if (data.redirectUrl) { window.location.href = data.redirectUrl; return; }
-          statusMsg.style.color = '#10b981';
+          statusMsg.style.color = 'var(--accent)';
           statusMsg.innerText = data.message || 'Order received.';
           setTimeout(() => { window.location.href = '/dashboard.html'; }, 2500);
         } else {
@@ -651,6 +668,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (logoutBtn) {
     logoutBtn.addEventListener('click', async () => {
       await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
+      if (window.cwsFirebase && window.cwsFirebase.enabled) await window.cwsFirebase.signOut();
       window.location.href = '/login.html';
     });
   }

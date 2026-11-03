@@ -15,6 +15,7 @@
     "express": "^4.21.2",
     "express-rate-limit": "^7.4.1",
     "express-session": "^1.18.1",
+    "firebase-admin": "^12.7.0",
     "helmet": "^8.0.0",
     "paynow": "^1.0.2"
   },
