@@ -430,7 +430,7 @@ function setupRedeem() {
       msg.textContent = data.message || 'That code is not valid.';
       return;
     }
-    msg.innerHTML = `Unlocked: <strong>${esc(data.item.title)}</strong> (${esc(data.item.item_code)}) — <a class="download-link" href="${esc(data.downloadUrl)}">Download your file</a>`;
+    msg.innerHTML = `Unlocked: <strong>${esc(data.item.title)}</strong> (${esc(data.item.item_code)}) — <a class="download-link" href="${esc(window.cwsApiUrl ? window.cwsApiUrl(data.downloadUrl) : data.downloadUrl)}">Download your file</a>`;
   });
   document.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-use-code]');

@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script src="assets/api-base.js"></script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CreativeConnect | CWS Multimedia Connect</title>
@@ -451,7 +452,7 @@
       const { response, data } = await fetchJson('/api/redeem', { method: 'POST', body: JSON.stringify({ code: document.getElementById('ccRedeemCode').value }) });
       if (response.status === 401) { window.location.href = 'login.html?next=creativeconnect.html'; return; }
       if (!response.ok || !data.success) { box.classList.add('error'); box.textContent = data.message || 'That code is not valid.'; return; }
-      box.innerHTML = `Unlocked <strong>${esc(data.item.title)}</strong> (${esc(data.item.item_code)}) — <a class="download-link" href="${esc(data.downloadUrl)}">Download your file</a>`;
+      box.innerHTML = `Unlocked <strong>${esc(data.item.title)}</strong> (${esc(data.item.item_code)}) — <a class="download-link" href="${esc(window.cwsApiUrl ? window.cwsApiUrl(data.downloadUrl) : data.downloadUrl)}">Download your file</a>`;
     });
   </script>
   <script src="assets/guide-kb.js"></script>

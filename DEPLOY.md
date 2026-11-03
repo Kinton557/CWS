@@ -23,3 +23,11 @@ Firebase checks the passwords and sends verification and reset emails. The serve
 5. The admin must verify the email (`ADMIN_EMAIL`) once: sign up on the site with that email, open the Firebase verification email, then log in. Until then the admin account is refused on purpose.
 Free Spark plan is enough. The domain must still point to Render, because Firebase only handles passwords, not your orders and dashboard.
 If `apiKey` is empty the old email + password login keeps working.
+
+## Split hosting (current setup): pages on GitHub Pages, server on Render
+- Pages: GitHub Pages serves this repo at https://cwsmultimediaconnect.co.zw (DNS at OneDomain: the GitHub A records and the `www` CNAME stay as they are).
+- Server: Render serves the API at https://api.cwsmultimediaconnect.co.zw (CNAME `api` -> `cws-main.onrender.com`, domain added in Render > Settings > Custom Domains). Do NOT add the main or www domain in Render.
+- `assets/api-base.js` sends every `/api/...` call from the pages to the API address and keeps the login cookie (the two addresses share the same domain, so the cookie works).
+- Render environment variables: `NODE_ENV=production`, `BASE_URL=https://api.cwsmultimediaconnect.co.zw`, `SITE_URL=https://cwsmultimediaconnect.co.zw`, `FIREBASE_PROJECT_ID`, `ADMIN_PASSWORD`, `SESSION_SECRET`. Optional: `ALLOWED_ORIGINS` (comma list, defaults to the main and www addresses).
+- Never commit `.env`, `data/` or `deliverables/`: GitHub Pages publishes everything in the repo. A `.gitignore` is included.
+- The onrender.com address still serves the pages and works for testing, but Firebase login only works on the authorized domains.

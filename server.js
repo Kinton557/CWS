@@ -21,6 +21,14 @@ try { ({ Paynow } = require('paynow')); } catch (e) { /* paynow optional */ }
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+// Split hosting: pages on GitHub Pages (SITE_URL), this server on its own address (API_URL, BASE_URL by default).
+const SITE_URL = (process.env.SITE_URL || BASE_URL).replace(/\/$/, '');
+const API_URL = (process.env.API_URL || BASE_URL).replace(/\/$/, '');
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://cwsmultimediaconnect.co.zw,https://www.cwsmultimediaconnect.co.zw')
+  .split(',').map((o) => o.trim().replace(/\/$/, '')).filter(Boolean);
+// Uploaded images live on this server; send the pages an absolute address, store the relative one.
+const assetUrl = (v) => (/^uploads\//.test(String(v || '')) ? `${API_URL}/${v}` : v);
+const relAsset = (v) => (String(v || '').startsWith(`${API_URL}/uploads/`) ? String(v).slice(API_URL.length + 1) : v);
 const ECOCASH_NUMBER = process.env.ECOCASH_NUMBER || '0774274544';
 const IS_PROD = process.env.NODE_ENV === 'production';
 
@@ -190,7 +198,7 @@ function publicPost(p) {
   try { features = JSON.parse(p.features || '[]'); } catch (e) { features = []; }
   return {
     id: p.id, item_code: p.item_code, title: p.title, category: p.category, label: p.label, filter_key: p.filter_key,
-    price: p.price, image: p.image, format: p.format, delivery: p.delivery, meta: p.meta,
+    price: p.price, image: assetUrl(p.image), format: p.format, delivery: p.delivery, meta: p.meta,
     description: p.description, features, status: p.status
   };
 }
@@ -284,7 +292,7 @@ if (!adminPassword) {
 /* ------------------------------------------------------------------ */
 if (IS_PROD) app.set('trust proxy', 1);
 app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: false }));
-app.use(cors({ origin: false }));
+app.use(cors({ origin: (origin, cb) => cb(null, !origin || ALLOWED_ORIGINS.includes(origin)), credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(session({
@@ -304,8 +312,8 @@ const authLimiter = rateLimit({
 const paynowReady = Boolean(Paynow && process.env.PAYNOW_INTEGRATION_ID && process.env.PAYNOW_INTEGRATION_KEY);
 function newPaynow() {
   const p = new Paynow(process.env.PAYNOW_INTEGRATION_ID, process.env.PAYNOW_INTEGRATION_KEY);
-  p.resultUrl = `${BASE_URL}/api/paynow/update`;
-  p.returnUrl = `${BASE_URL}/thank-you.html`;
+  p.resultUrl = `${API_URL}/api/paynow/update`;
+  p.returnUrl = `${SITE_URL}/thank-you.html`;
   return p;
 }
 
@@ -463,7 +471,7 @@ app.post('/api/logout', (req, res) => {
 /* ------------------------------------------------------------------ */
 const cleanText = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
 const cleanImage = (v) => {
-  const x = String(v || '').trim();
+  const x = relAsset(String(v || '').trim());
   return /^(uploads\/[A-Za-z0-9._ -]+|https:\/\/[^\s"'<>]+)$/.test(x) ? x : '';
 };
 const cleanUrl = (v) => {
@@ -474,7 +482,9 @@ const cleanUrl = (v) => {
 
 app.get('/api/about', (req, res) => {
   const profile = db.prepare('SELECT name, role, bio, photo, location FROM about_profile WHERE id = 1').get() || null;
-  const brands = db.prepare('SELECT id, name, tagline, url, logo FROM brands ORDER BY sort_order ASC, id ASC').all();
+  const brands = db.prepare('SELECT id, name, tagline, url, logo FROM brands ORDER BY sort_order ASC, id ASC').all()
+    .map((b) => ({ ...b, logo: assetUrl(b.logo) }));
+  if (profile) profile.photo = assetUrl(profile.photo);
   res.json({ success: true, profile, brands });
 });
 
@@ -548,7 +558,7 @@ function readPostBody(body, existing = {}) {
     label: clean(body.label || existing.label || body.category || existing.category || '', 40),
     filter_key: clean(body.filter_key || existing.filter_key || 'flyers', 20),
     price: clean(body.price || existing.price, 20),
-    image: clean(body.image || existing.image || 'church-service.jpg', 200),
+    image: relAsset(clean(body.image || existing.image || 'church-service.jpg', 200)),
     file_name: clean(body.file_name != null ? body.file_name : (existing.file_name || ''), 200),
     format: clean(body.format || existing.format || 'Digital', 60),
     delivery: clean(body.delivery || existing.delivery || 'Instant after payment', 60),
@@ -749,7 +759,7 @@ app.post('/api/redeem', requireAuth, (req, res) => {
   res.json({
     success: true,
     item: { title: post.title, item_code: post.item_code, format: post.format },
-    downloadUrl: `/api/download/${encodeURIComponent(order.access_code)}`
+    downloadUrl: `${API_URL}/api/download/${encodeURIComponent(order.access_code)}`
   });
 });
 
