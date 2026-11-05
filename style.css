@@ -389,13 +389,15 @@ a.brand-card:hover{transform:translateY(-4px);border-color:var(--border-strong)}
 .brand-admin-text small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:900px){.owner-card{grid-template-columns:1fr}.owner-photo{max-width:260px}.brand-admin-list{grid-template-columns:1fr}}
 
-/* ===== About hero photo ===== */
-.about-hero{position:relative;isolation:isolate;display:flex;align-items:flex-end;min-height:clamp(440px,74vh,760px);color:#f3f5f8;background:#05070a url(assets/about-bg.jpg) 80% 18%/cover no-repeat;border-bottom:1px solid var(--border)}
-.about-hero::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,rgba(5,7,10,.94) 0%,rgba(5,7,10,.72) 40%,rgba(5,7,10,.1) 100%),linear-gradient(0deg,rgba(5,7,10,.7) 0%,transparent 35%)}
-.about-hero .container{width:100%}
-.about-hero h1{color:#fff;text-shadow:0 2px 24px rgba(0,0,0,.5)}
-.about-hero .subheading{color:#c3c9d1}
-@media(max-width:700px){.about-hero{min-height:560px;background-position:62% 0}.about-hero::before{background:linear-gradient(0deg,rgba(5,7,10,.95) 0%,rgba(5,7,10,.7) 45%,rgba(5,7,10,.1) 100%)}}
+/* ===== About: the photo is the background of the whole page ===== */
+.about-bg{position:fixed;inset:0;z-index:-1;pointer-events:none;background:#05070a url(assets/about-bg.jpg) right center/auto 100% no-repeat}
+.about-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,7,10,.96) 0%,rgba(5,7,10,.86) 38%,rgba(5,7,10,.42) 70%,rgba(5,7,10,.18) 100%)}
+body.about-page{color-scheme:dark;--bg:#0b0e13;--surface:rgba(18,23,30,.82);--surface-2:rgba(24,31,40,.82);--border:#252e3a;--border-strong:#34404f;--text:#f3f5f8;--muted:#b3bfcc;--accent:#c3c9d1;--accent-ink:#0b0e13;--accent-soft:rgba(195,201,209,.12);--nav-bg:rgba(11,14,19,.78);--hover:rgba(255,255,255,.06);background:transparent}
+body.about-page .page-hero{border-bottom:0;min-height:clamp(260px,42vh,420px);display:flex;align-items:flex-end}
+body.about-page .page-hero h1{text-shadow:0 2px 24px rgba(0,0,0,.55)}
+body.about-page .footer{background:rgba(11,14,19,.78);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+body.about-page .story-block p{text-shadow:0 1px 12px rgba(0,0,0,.6)}
+@media(max-width:900px){.about-bg{background-size:cover;background-position:65% 0}.about-bg::after{background:linear-gradient(0deg,rgba(5,7,10,.94) 0%,rgba(5,7,10,.78) 50%,rgba(5,7,10,.45) 100%)}}
 
 /* ===== Brands: big picture buttons + pop-up ===== */
 .brands-hint{margin:6px 0 22px}
