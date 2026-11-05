@@ -6,12 +6,12 @@
     var wrap = document.createElement('span'); wrap.className = 'pw-wrap';
     inp.parentNode.insertBefore(wrap, inp); wrap.appendChild(inp);
     var b = document.createElement('button'); b.type = 'button'; b.className = 'pw-toggle';
-    b.setAttribute('aria-label', 'Show password'); b.setAttribute('aria-pressed', 'false'); b.innerHTML = EYE + '<span>Show</span>';
+    b.setAttribute('aria-label', 'Show password'); b.setAttribute('aria-pressed', 'false'); b.innerHTML = EYE;
     wrap.appendChild(b);
     b.addEventListener('click', function () {
       var show = inp.type === 'password';
       inp.type = show ? 'text' : 'password';
-      b.innerHTML = (show ? OFF : EYE) + '<span>' + (show ? 'Hide' : 'Show') + '</span>';
+      b.innerHTML = show ? OFF : EYE;
       b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
       b.setAttribute('aria-pressed', show ? 'true' : 'false');
       inp.focus();
