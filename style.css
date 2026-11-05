@@ -455,3 +455,12 @@ body.about-page .story-block p{text-shadow:0 1px 12px rgba(0,0,0,.6)}
 .pw-toggle{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:46px;height:46px;display:grid;place-items:center;background:transparent;border:0;border-radius:6px;color:var(--text);opacity:.85;cursor:pointer}
 .pw-toggle:hover,.pw-toggle:focus-visible{opacity:1;background:var(--hover)}
 .pw-toggle svg{width:28px;height:28px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+/* About: Who is CWS */
+.who-section h2{margin:10px 0 22px}
+.who-section p{color:var(--muted);font-size:1.05rem;line-height:1.75;margin-bottom:18px}
+.who-section .who-lead{color:var(--text);font-size:1.15rem}
+.who-section .who-lead strong{color:var(--accent)}
+.who-section .who-tagline{color:var(--text);font-weight:700;font-size:1.1rem}
+.who-section em{color:var(--text);font-style:normal;font-weight:700}
+.who-quote{margin:28px 0 0;padding:18px 0 18px 22px;border-left:3px solid var(--accent);color:var(--text);font-size:1.12rem;font-weight:600;line-height:1.6}
