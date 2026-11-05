@@ -26,6 +26,41 @@
     return b.logo ? '<img src="' + esc(src(b.logo)) + '" alt="" loading="lazy" />' : '<span>' + esc(initials(b.name)) + '</span>';
   }
 
+  /* ---- brand pictures + details pop-up ---- */
+  var brandList = [], lastFocus = null, modal = null;
+  function mediaHtml(b) {
+    return '<span class="brand-media" data-bm="' + b.id + '">' + (b.logo ? '<img src="' + esc(src(b.logo)) + '" alt="' + esc(b.name) + '" loading="lazy" />' : '<span class="brand-initials">' + esc(initials(b.name)) + '</span>') + '</span>';
+  }
+  function paintMedia(scope, list) { // blurred copy of the picture fills the frame, the full picture sits on top, so any shape looks good
+    list.forEach(function (b) { if (!b.logo) return; var el = scope.querySelector('[data-bm="' + b.id + '"]'); if (el) el.style.setProperty('--img', 'url("' + encodeURI(src(b.logo)) + '")'); });
+  }
+  function ensureModal() {
+    if (modal) return modal;
+    modal = document.createElement('div');
+    modal.className = 'modal brand-modal'; modal.setAttribute('role', 'dialog'); modal.setAttribute('aria-modal', 'true'); modal.setAttribute('aria-labelledby', 'bmTitle');
+    modal.innerHTML = '<div class="modal-backdrop" data-close></div><div class="modal-card brand-dialog"><button type="button" class="modal-close" data-close aria-label="Close">&times;</button><div id="bmBody"></div></div>';
+    document.body.appendChild(modal);
+    modal.addEventListener('click', function (e) { if (e.target.closest('[data-close]')) closeBrand(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && modal.classList.contains('active')) closeBrand(); });
+    return modal;
+  }
+  function openBrand(id, trigger) {
+    var b = brandList.filter(function (x) { return String(x.id) === String(id); })[0]; if (!b) return;
+    ensureModal(); lastFocus = trigger || null;
+    var paras = String(b.description || '').split(/\n{2,}|\r\n\r\n/).filter(Boolean).map(function (p) { return '<p>' + esc(p).replace(/\n/g, '<br>') + '</p>'; }).join('');
+    $('bmBody').innerHTML = mediaHtml(b).replace('brand-media', 'brand-media large') +
+      '<div class="brand-dialog-text"><h3 id="bmTitle">' + esc(b.name) + '</h3>' + (b.tagline ? '<p class="role">' + esc(b.tagline) + '</p>' : '') +
+      (paras || (b.tagline ? '' : '<p class="muted">More details are coming soon.</p>')) +
+      '<div class="brand-actions">' + (b.url ? '<a class="btn-primary" href="' + esc(b.url) + '" target="_blank" rel="noopener noreferrer">Visit ' + esc(b.name) + ' &rarr;</a>' : '') + '<button type="button" class="btn-secondary" data-close>Close</button></div></div>';
+    paintMedia($('bmBody'), [b]);
+    modal.classList.add('active'); document.body.style.overflow = 'hidden';
+    var c = modal.querySelector('.btn-primary, .btn-secondary'); if (c) c.focus();
+  }
+  function closeBrand() {
+    if (!modal) return; modal.classList.remove('active'); document.body.style.overflow = '';
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+
   /* ---------------- Public About page ---------------- */
   if ($('ownerSection') || $('brandsSection')) {
     fetch('/api/about').then(function (r) { return r.json(); }).then(function (d) {
@@ -43,13 +78,16 @@
       }
       if (d.brands && d.brands.length && $('brandsSection')) {
         $('brandsSection').hidden = false;
+        brandList = d.brands;
         $('brandGrid').innerHTML = d.brands.map(function (b) {
-          var inner = '<div class="brand-logo-box">' + logoOrInitials(b) + '</div><h3>' + esc(b.name) + '</h3>' +
-            (b.tagline ? '<p>' + esc(b.tagline) + '</p>' : '') + (b.url ? '<span class="brand-visit">Visit &rarr;</span>' : '');
-          return b.url
-            ? '<a class="brand-card" href="' + esc(b.url) + '" target="_blank" rel="noopener noreferrer">' + inner + '</a>'
-            : '<div class="brand-card">' + inner + '</div>';
+          return '<button type="button" class="brand-tile" data-brand="' + b.id + '" aria-haspopup="dialog" aria-label="' + esc(b.name) + ': view details">' +
+            mediaHtml(b) + '<span class="brand-meta"><strong>' + esc(b.name) + '</strong>' + (b.tagline ? '<small>' + esc(b.tagline) + '</small>' : '') + '<em>View details &rarr;</em></span></button>';
         }).join('');
+        paintMedia($('brandGrid'), d.brands);
+        $('brandGrid').addEventListener('click', function (e) {
+          var t = e.target.closest('[data-brand]'); if (!t) return;
+          openBrand(t.getAttribute('data-brand'), t);
+        });
       }
     }).catch(function () {});
   }
@@ -65,10 +103,10 @@
   }
   function paintBrandLogo(path) {
     $('brLogo').value = path || '';
-    $('brLogoStatus').textContent = path ? 'Logo ready: ' + path.replace(/^uploads\/[a-z0-9]+-/i, '') : '';
+    $('brLogoStatus').textContent = path ? 'Picture ready: ' + path.replace(/^uploads\/[a-z0-9]+-/i, '') : '';
   }
   function resetBrandForm() {
-    $('brId').value = ''; $('brName').value = ''; $('brTagline').value = ''; $('brUrl').value = '';
+    $('brId').value = ''; $('brName').value = ''; $('brTagline').value = ''; $('brDescription').value = ''; $('brUrl').value = '';
     paintBrandLogo(''); $('brSubmit').textContent = 'Add brand'; $('brCancel').style.display = 'none';
   }
   function renderBrands() {
@@ -119,7 +157,7 @@
   $('brandForm').addEventListener('submit', function (e) {
     e.preventDefault();
     var id = $('brId').value;
-    var body = { name: $('brName').value, tagline: $('brTagline').value, url: $('brUrl').value, logo: $('brLogo').value };
+    var body = { name: $('brName').value, tagline: $('brTagline').value, description: $('brDescription').value, url: $('brUrl').value, logo: $('brLogo').value };
     api(id ? '/api/admin/brands/' + id : '/api/admin/brands', id ? 'PUT' : 'POST', body).then(function (r) {
       if (!r.ok) return msg('brMessage', r.data.message || 'Could not save brand.', true);
       msg('brMessage', id ? 'Brand updated.' : 'Brand added.'); resetBrandForm(); load();
@@ -131,7 +169,7 @@
     var ed = e.target.getAttribute('data-edit'), del = e.target.getAttribute('data-del');
     if (ed) {
       var b = brands.filter(function (x) { return String(x.id) === ed; })[0]; if (!b) return;
-      $('brId').value = b.id; $('brName').value = b.name; $('brTagline').value = b.tagline || ''; $('brUrl').value = b.url || '';
+      $('brId').value = b.id; $('brName').value = b.name; $('brTagline').value = b.tagline || ''; $('brDescription').value = b.description || ''; $('brUrl').value = b.url || '';
       paintBrandLogo(b.logo || ''); $('brSubmit').textContent = 'Save brand'; $('brCancel').style.display = '';
       $('brandForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
