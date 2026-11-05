@@ -447,3 +447,10 @@ body.about-page .story-block p{text-shadow:0 1px 12px rgba(0,0,0,.6)}
 .hl-kv{display:grid;gap:8px;font-size:.88rem}.hl-kv div{display:flex;justify-content:space-between;gap:12px;border-bottom:1px dashed var(--border);padding-bottom:6px}
 .hl-kv dt{color:var(--muted)}.hl-kv dd{font-weight:600;text-align:right;word-break:break-word}
 @media(max-width:600px){.hl-list li{grid-template-columns:14px 1fr}.hl-list li small{grid-column:2}}
+
+/* ===== Show / hide password ===== */
+.pw-wrap{position:relative;display:block}
+.pw-wrap input{padding-right:104px;width:100%}
+.pw-toggle{position:absolute;right:6px;top:50%;transform:translateY(-50%);height:42px;min-width:84px;padding:0 12px;display:inline-flex;align-items:center;justify-content:center;gap:8px;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:6px;color:var(--text);font-size:.85rem;font-weight:700;cursor:pointer}
+.pw-toggle:hover{background:var(--text);color:var(--bg)}
+.pw-toggle svg{width:24px;height:24px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
