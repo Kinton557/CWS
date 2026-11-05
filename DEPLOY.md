@@ -31,3 +31,14 @@ If `apiKey` is empty the old email + password login keeps working.
 - Render environment variables: `NODE_ENV=production`, `BASE_URL=https://api.cwsmultimediaconnect.co.zw`, `SITE_URL=https://cwsmultimediaconnect.co.zw`, `FIREBASE_PROJECT_ID`, `ADMIN_PASSWORD`, `SESSION_SECRET`. Optional: `ALLOWED_ORIGINS` (comma list, defaults to the main and www addresses).
 - Never commit `.env`, `data/` or `deliverables/`: GitHub Pages publishes everything in the repo. A `.gitignore` is included.
 - The onrender.com address still serves the pages and works for testing, but Firebase login only works on the authorized domains.
+
+## Staying signed in (important)
+Logins are now a signed 30-day cookie, so Render restarts and sleeps no longer sign people out. For this to survive new deploys set **`SESSION_SECRET`** (a long random string) in Render > Environment and never change it. Without it a generated secret is saved in `data/`, which is wiped on every deploy unless you attach a persistent disk. Optional: `COOKIE_SAMESITE` (`lax` or `none`) and `COOKIE_DOMAIN` (e.g. `.cwsmultimediaconnect.co.zw`).
+
+## Developer account (Kinton Technologies)
+Developers can open Dashboard > Website health and Visitor analytics (read only; no orders, invoices or customers). Two ways:
+1. Set `DEV_EMAILS=dev@example.com` (comma list) in Render. Optional `DEV_PASSWORD` creates the first one. With Firebase they sign up normally and are upgraded after verifying their email.
+2. Or, as admin: Dashboard > Registered users > **Make developer**.
+
+## Analytics
+Visits are counted on our own server (table `hits`, kept 90 days). Staff and bots are skipped; visitors can opt out from the Privacy page. Public uptime ping for monitors: `GET /api/health`.

@@ -27,9 +27,18 @@ const statusPill = (s) => `<span class="status-pill ${esc(s)}">${esc(STATUS_LABE
 let siteConfig = { ecocash: '0774274544', accountName: 'Chikomborero Walter Sumairi', paynow: false };
 const configReady = fetch('/api/config').then((r) => r.json()).then((c) => { if (c && c.success) siteConfig = c; }).catch(() => {});
 
-async function fetchSession() {
-  const response = await fetch('/api/session', { credentials: 'same-origin' });
-  return response.json();
+async function fetchSession(retries = 2) {
+  // A sleeping server can take a while or fail once. Retry instead of treating that as "signed out".
+  let lastErr;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const response = await fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' });
+      if (response.ok) return await response.json();
+      lastErr = new Error('status ' + response.status);
+    } catch (e) { lastErr = e; }
+    await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+  }
+  throw lastErr;
 }
 
 /* ---------- Pricing page order modal ---------- */
@@ -136,9 +145,9 @@ function renderUserSummary(user, orders, invoices) {
   const unpaid = invoices.filter((i) => i.status === 'unpaid').length;
   wrapper.innerHTML = `
     <div class="dashboard-card accent"><span class="dashboard-label">Account</span><h3>${esc(user.name)}</h3><p>${esc(user.email)}</p></div>
-    <div class="dashboard-card"><span class="dashboard-label">Role</span><h3>${user.role === 'admin' ? 'Administrator' : 'Customer'}</h3><p>${user.role === 'admin' ? 'Full access' : 'Standard access'}</p></div>
-    <div class="dashboard-card"><span class="dashboard-label">Orders</span><h3>${orders.length}</h3><p>${user.role === 'admin' ? 'All customers' : 'Your purchases'}</p></div>
-    <div class="dashboard-card"><span class="dashboard-label">${user.role === 'admin' ? 'Revenue (paid)' : 'Total paid'}</span><h3>${money(paidTotal)}</h3><p>${unpaid} unpaid invoice${unpaid === 1 ? '' : 's'}</p></div>`;
+    <div class="dashboard-card"><span class="dashboard-label">Role</span><h3>${user.role === 'admin' ? 'Administrator' : user.role === 'developer' ? 'Developer' : 'Customer'}</h3><p>${user.role === 'admin' ? 'Full access' : user.role === 'developer' ? 'Site health and analytics (read only)' : 'Standard access'}</p></div>
+    ${user.role === 'developer' ? '' : `<div class="dashboard-card"><span class="dashboard-label">Orders</span><h3>${orders.length}</h3><p>${user.role === 'admin' ? 'All customers' : 'Your purchases'}</p></div>
+    <div class="dashboard-card"><span class="dashboard-label">${user.role === 'admin' ? 'Revenue (paid)' : 'Total paid'}</span><h3>${money(paidTotal)}</h3><p>${unpaid} unpaid invoice${unpaid === 1 ? '' : 's'}</p></div>`}`;
 }
 
 function renderOrdersTable(orders, isAdmin) {
@@ -411,7 +420,7 @@ async function refreshUsers() {
   const users = data.success ? data.users : [];
   body.innerHTML = users.map((u) => `
     <tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${esc(u.role)}</td>
-    <td class="row-actions">${u.role === 'admin' ? '' : `<button type="button" class="mini-btn danger" data-user-delete="${u.id}">Remove</button>`}</td></tr>`).join('');
+    <td class="row-actions">${u.role === 'admin' ? '' : `<button type="button" class="mini-btn" data-user-role="${u.id}" data-to="${u.role === 'developer' ? 'user' : 'developer'}">${u.role === 'developer' ? 'Remove developer access' : 'Make developer'}</button> <button type="button" class="mini-btn danger" data-user-delete="${u.id}">Remove</button>`}</td></tr>`).join('');
 }
 
 /* Buyer: redeem code */
@@ -441,14 +450,22 @@ function setupRedeem() {
 }
 
 async function loadDashboard() {
-  const session = await fetchSession();
-  if (!session.authenticated || !session.user) { window.location.href = '/login.html'; return; }
+  let session;
+  try { session = await fetchSession(); } catch (e) {
+    const box = document.getElementById('userSummary');
+    if (box) box.innerHTML = '<div class="dashboard-card"><span class="dashboard-label">Connection</span><h3>Cannot reach the server</h3><p>It may be waking up. You are still signed in. <a href="dashboard.html">Try again</a></p></div>';
+    return;
+  }
+  if (!session.authenticated || !session.user) { if (window.cwsRememberUser) window.cwsRememberUser(null); window.location.href = 'login.html'; return; }
+  if (window.cwsRememberUser) window.cwsRememberUser(session.user);
   await configReady;
   dashUser = session.user;
   const isAdmin = dashUser.role === 'admin';
+  const isDev = dashUser.role === 'developer';
 
   document.querySelectorAll('[data-admin-only]').forEach((el) => { el.style.display = isAdmin ? '' : 'none'; });
-  document.querySelectorAll('[data-user-only]').forEach((el) => { el.style.display = isAdmin ? 'none' : ''; });
+  document.querySelectorAll('[data-user-only]').forEach((el) => { el.style.display = (isAdmin || isDev) ? 'none' : ''; });
+  document.querySelectorAll('[data-staff-only]').forEach((el) => { el.style.display = (isAdmin || isDev) ? '' : 'none'; });
 
   await refreshInvoices();
   await refreshOrders();
@@ -499,6 +516,14 @@ async function loadDashboard() {
         document.getElementById('invCancel').style.display = '';
         document.getElementById('invoiceForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
+      return;
+    }
+
+    const roleBtn = e.target.closest('[data-user-role]');
+    if (roleBtn) {
+      const { data } = await fetchJson(`/api/admin/users/${roleBtn.dataset.userRole}/role`, { method: 'PATCH', body: JSON.stringify({ role: roleBtn.dataset.to }) });
+      if (!data.success) window.alert(data.message || 'Could not change access.');
+      refreshUsers();
       return;
     }
 
@@ -669,7 +694,8 @@ document.addEventListener('DOMContentLoaded', () => {
     logoutBtn.addEventListener('click', async () => {
       await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
       if (window.cwsFirebase && window.cwsFirebase.enabled) await window.cwsFirebase.signOut();
-      window.location.href = '/login.html';
+      if (window.cwsRememberUser) window.cwsRememberUser(null);
+      window.location.href = 'login.html';
     });
   }
 

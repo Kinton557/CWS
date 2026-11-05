@@ -169,6 +169,16 @@
           <div id="designList" class="design-list"></div>
         </div>
 
+        <!-- Staff: analytics + site health (admin and developer) -->
+        <div class="table-wrap panel" data-staff-only style="display:none">
+          <div class="admin-panel-header"><h3>Website health</h3><p>Server, database and page checks. Open to administrators and Kinton Technologies developer accounts.</p></div>
+          <div id="healthBody"></div>
+        </div>
+        <div class="table-wrap panel" data-staff-only style="display:none">
+          <div class="admin-panel-header"><h3>Visitor analytics</h3><p>Who is on the site, where they come from and what they read.</p></div>
+          <div id="analyticsBody"></div>
+        </div>
+
         <!-- Admin: About page -->
         <div class="table-wrap panel" data-admin-only>
           <div class="admin-panel-header">
@@ -201,10 +211,11 @@
           <form id="brandForm" class="design-form">
             <input type="hidden" id="brId" />
             <div><label for="brName">Brand name</label><input id="brName" type="text" maxlength="120" required /></div>
-            <div><label for="brTagline">Short description</label><input id="brTagline" type="text" maxlength="240" placeholder="What this brand does" /></div>
+            <div><label for="brTagline">One-line summary</label><input id="brTagline" type="text" maxlength="240" placeholder="What this brand does" /></div>
+            <div class="design-form-description"><label for="brDescription">Full details (shown when visitors press the picture)</label><textarea id="brDescription" rows="5" maxlength="2000" placeholder="Services, story, prices, how to reach this brand..."></textarea></div>
             <div><label for="brUrl">Website or social link (optional)</label><input id="brUrl" type="url" placeholder="https://" /></div>
             <div>
-              <label for="brLogoUpload">Logo (optional)</label>
+              <label for="brLogoUpload">Brand picture (shown big on the About page; a wide photo or logo works best)</label>
               <input id="brLogoUpload" type="file" accept="image/png,image/jpeg,image/webp" />
               <input id="brLogo" type="hidden" />
               <small id="brLogoStatus" class="muted"></small>
@@ -245,5 +256,8 @@
   <script src="assets/guide.js"></script>
   <script src="assets/admin-extras.js"></script>
   <script src="assets/about.js"></script>
+  <script src="assets/auth-nav.js"></script>
+  <script src="assets/admin-analytics.js"></script>
+  <script src="assets/admin-health.js"></script>
 </body>
 </html>

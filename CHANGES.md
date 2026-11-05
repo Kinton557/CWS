@@ -17,3 +17,9 @@ Auth, orders, EcoCash/Paynow logic, invoices API, database, catalog data, all pa
 - Accent colour is grey (light grey on the dark theme, dark grey on the light theme). WhatsApp buttons stay green.
 - About page: owner photo, name, role and bio plus an "Our other brands" grid, all editable in Dashboard > About page: owner and brands (admin only). New: assets/about.js, /api/about, /api/admin/about, /api/admin/brands.
 - Firebase Authentication for login, signup and password reset (assets/firebase-config.js, assets/firebase-auth.js, POST /api/auth/firebase). Old login stays as fallback until the config is filled in.
+
+## Latest (login, analytics, developer, brands)
+- Login fix: signed 30-day cookie instead of in-memory sessions; header shows Dashboard / Log out on every page (assets/auth-nav.js); a sleeping server no longer signs you out.
+- Dashboard: Website health + Visitor analytics (assets/admin-health.js, admin-analytics.js; /api/staff/health, /api/staff/analytics, /api/track).
+- New `developer` role (DEV_EMAILS or Make developer button).
+- About: owner photo as hero background (assets/about-bg.jpg); other brands are big picture buttons that open a details pop-up; new "Full details" field per brand.

@@ -4,7 +4,6 @@
  * EcoCash: 0774274544
  */
 const express = require('express');
-const session = require('express-session');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -71,6 +70,16 @@ db.exec(`
     logo TEXT DEFAULT '',
     sort_order INTEGER DEFAULT 0,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS hits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    t INTEGER NOT NULL, vid TEXT NOT NULL, sid TEXT NOT NULL, path TEXT NOT NULL,
+    ref TEXT DEFAULT '', dev TEXT DEFAULT '', br TEXT DEFAULT '', os TEXT DEFAULT '', tz TEXT DEFAULT '', nv INTEGER DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_hits_t ON hits(t);
+  CREATE TABLE IF NOT EXISTS live (
+    vid TEXT PRIMARY KEY, t INTEGER NOT NULL, sid TEXT, path TEXT, dev TEXT, br TEXT, tz TEXT
   );
 
   CREATE TABLE IF NOT EXISTS design_posts (
@@ -277,6 +286,8 @@ seedCatalog();
 db.prepare("SELECT id FROM design_posts WHERE item_code IS NULL OR item_code = ''").all()
   .forEach((row) => db.prepare('UPDATE design_posts SET item_code = ? WHERE id = ?').run(nextItemCode(), row.id));
 
+try { db.exec("ALTER TABLE brands ADD COLUMN description TEXT DEFAULT ''"); } catch (e) { /* column already exists */ }
+
 const adminEmail = String(process.env.ADMIN_EMAIL || 'chikomborerowaltersumairi26@gmail.com').trim().toLowerCase();
 const adminPassword = process.env.ADMIN_PASSWORD;
 if (!adminPassword) {
@@ -287,6 +298,15 @@ if (!adminPassword) {
   );
 }
 
+// Developer accounts (Kinton Technologies): list their emails in DEV_EMAILS. Optional DEV_PASSWORD creates the first one.
+const devEmails = String(process.env.DEV_EMAILS || process.env.DEV_EMAIL || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+if (devEmails.length) {
+  db.prepare(`UPDATE users SET role = 'developer' WHERE role = 'user' AND email IN (${devEmails.map(() => '?').join(',')})`).run(...devEmails);
+  if (process.env.DEV_PASSWORD && !db.prepare('SELECT id FROM users WHERE email = ?').get(devEmails[0])) {
+    db.prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)').run('Kinton Technologies', devEmails[0], bcrypt.hashSync(process.env.DEV_PASSWORD, 12), 'developer');
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Middleware                                                          */
 /* ------------------------------------------------------------------ */
@@ -295,15 +315,91 @@ app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: false 
 app.use(cors({ origin: (origin, cb) => cb(null, !origin || ALLOWED_ORIGINS.includes(origin)), credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use(session({
-  name: 'cws_sid',
-  secret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
-  resave: false,
-  saveUninitialized: false,
-  cookie: { secure: IS_PROD, httpOnly: true, sameSite: 'lax', maxAge: 1000 * 60 * 60 * 8 }
-}));
+/* ---- Sign-in that survives restarts -------------------------------- */
+/* The login lives in a signed cookie (30 days, renewed while you use the site), so it does not
+   depend on server memory. Render restarts or sleeps the server often; the old in-memory
+   session was lost every time and everyone had to sign in again. Set SESSION_SECRET in .env. */
+const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+const RENEW_MS = 6 * 60 * 60 * 1000;
+const SESSION_SECRET_FROM_ENV = Boolean(process.env.SESSION_SECRET);
+const SESSION_SECRET = (() => {
+  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
+  const f = path.join(dataDir, '.session-secret');
+  try { if (fs.existsSync(f)) { const v = fs.readFileSync(f, 'utf8').trim(); if (v.length >= 32) return v; } } catch (e) { /* fall through */ }
+  const v = crypto.randomBytes(48).toString('hex');
+  try { fs.writeFileSync(f, v, { mode: 0o600 }); } catch (e) { /* read-only disk */ }
+  console.warn('WARNING: SESSION_SECRET is not set. Using a generated secret saved in data/. Set SESSION_SECRET in .env so logins survive a new deploy.');
+  return v;
+})();
+const hostOf = (u) => { try { return new URL(u).hostname; } catch (e) { return ''; } };
+const sameSiteHosts = (a, b) => !a || !b || a === b || a.split('.').slice(1).join('.') === b || b.split('.').slice(1).join('.') === a;
+const COOKIE_SAMESITE = String(process.env.COOKIE_SAMESITE || (IS_PROD && !sameSiteHosts(hostOf(SITE_URL), hostOf(API_URL)) ? 'none' : 'lax')).toLowerCase();
+const signToken = (u, iat) => {
+  const body = Buffer.from(JSON.stringify({ u: { id: u.id, email: u.email }, iat, exp: iat + SESSION_MS })).toString('base64url');
+  return `v1.${body}.${crypto.createHmac('sha256', SESSION_SECRET).update(`v1.${body}`).digest('base64url')}`;
+};
+function readToken(req) {
+  const m = /(?:^|;\s*)cws_auth=([^;]+)/.exec(req.headers.cookie || '');
+  if (!m) return null;
+  const parts = m[1].split('.');
+  if (parts.length !== 3 || parts[0] !== 'v1') return null;
+  const want = crypto.createHmac('sha256', SESSION_SECRET).update(`v1.${parts[1]}`).digest();
+  let got; try { got = Buffer.from(parts[2], 'base64url'); } catch (e) { return null; }
+  if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) return null;
+  try {
+    const d = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    return d && d.u && d.exp > Date.now() ? d : null;
+  } catch (e) { return null; }
+}
+function cookieAttrs(maxAgeSec) {
+  let c = `; Path=/; HttpOnly; Max-Age=${maxAgeSec}; SameSite=${COOKIE_SAMESITE.charAt(0).toUpperCase()}${COOKIE_SAMESITE.slice(1)}`;
+  if (IS_PROD || COOKIE_SAMESITE === 'none') c += '; Secure';
+  if (process.env.COOKIE_DOMAIN) c += `; Domain=${process.env.COOKIE_DOMAIN}`;
+  return c;
+}
+app.use((req, res, next) => {
+  const tok = readToken(req);
+  let user = null;
+  if (tok) {
+    const row = db.prepare('SELECT id, name, email, role FROM users WHERE email = ?').get(String(tok.u.email || '').toLowerCase());
+    if (row && row.id === tok.u.id) user = row; // role changes made by the admin apply straight away
+  }
+  const setCookie = (u) => res.append('Set-Cookie', `cws_auth=${signToken(u, Date.now())}${cookieAttrs(SESSION_MS / 1000)}`);
+  const clearCookie = () => { res.append('Set-Cookie', `cws_auth=${cookieAttrs(0)}`); res.append('Set-Cookie', `cws_sid=${cookieAttrs(0)}`); };
+  const sess = {
+    regenerate(cb) { if (cb) cb(); },
+    destroy(cb) { user = null; clearCookie(); if (cb) cb(); }
+  };
+  Object.defineProperty(sess, 'user', { enumerable: true, get: () => user, set: (u) => { user = u || null; if (u) setCookie(u); else clearCookie(); } });
+  req.session = sess;
+  if (user && Date.now() - tok.iat > RENEW_MS) setCookie(user); // keep active people signed in
+  next();
+});
 
-app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false }));
+/* ---- Health bookkeeping (shown to staff in Dashboard > Site health) ---- */
+const startedAt = Date.now();
+const reqStats = { total: 0, s2: 0, s3: 0, s4: 0, s5: 0, lat: [] };
+const recentErrors = [];
+function pushError(kind, detail, extra) {
+  recentErrors.unshift(Object.assign({ t: Date.now(), kind, detail: String(detail || '').slice(0, 300) }, extra || {}));
+  if (recentErrors.length > 50) recentErrors.pop();
+}
+process.on('unhandledRejection', (e) => { pushError('unhandledRejection', e && e.message ? e.message : e); console.error('unhandledRejection', e); });
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+  const t0 = process.hrtime.bigint();
+  res.on('finish', () => {
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    reqStats.total++;
+    const c = res.statusCode;
+    if (c >= 500) { reqStats.s5++; pushError('http ' + c, `${req.method} ${req.path}`, { status: c }); }
+    else if (c >= 400) reqStats.s4++; else if (c >= 300) reqStats.s3++; else reqStats.s2++;
+    reqStats.lat.push(ms); if (reqStats.lat.length > 500) reqStats.lat.shift();
+  });
+  next();
+});
+
+app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false, skip: (req) => req.path === '/track' || req.path === '/health' }));
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false,
   message: { success: false, message: 'Too many attempts. Please wait 15 minutes and try again.' }
@@ -325,6 +421,12 @@ const requireAdmin = (req, res, next) => {
   if (!req.session.user || req.session.user.role !== 'admin') {
     return res.status(403).json({ success: false, message: 'Admin access required.' });
   }
+  next();
+};
+
+const requireStaff = (req, res, next) => {
+  const u = req.session.user;
+  if (!u || (u.role !== 'admin' && u.role !== 'developer')) return res.status(403).json({ success: false, message: 'Staff access required.' });
   next();
 };
 
@@ -412,6 +514,11 @@ app.post('/api/auth/firebase', authLimiter, async (req, res) => {
         .run(name, email, bcrypt.hashSync(crypto.randomBytes(24).toString('hex'), 10), email === adminEmail ? 'admin' : 'user');
       user = db.prepare('SELECT id, name, email, role FROM users WHERE id = ?').get(r.lastInsertRowid);
     }
+    if (devEmails.includes(email) && user.role === 'user') {
+      if (!decoded.email_verified) return res.status(403).json({ success: false, message: 'Please verify your email first, then log in again.' });
+      db.prepare("UPDATE users SET role = 'developer' WHERE id = ?").run(user.id);
+      user.role = 'developer';
+    }
     req.session.regenerate(() => {
       req.session.user = user;
       res.json({ success: true, user });
@@ -482,7 +589,7 @@ const cleanUrl = (v) => {
 
 app.get('/api/about', (req, res) => {
   const profile = db.prepare('SELECT name, role, bio, photo, location FROM about_profile WHERE id = 1').get() || null;
-  const brands = db.prepare('SELECT id, name, tagline, url, logo FROM brands ORDER BY sort_order ASC, id ASC').all()
+  const brands = db.prepare('SELECT id, name, tagline, description, url, logo FROM brands ORDER BY sort_order ASC, id ASC').all()
     .map((b) => ({ ...b, logo: assetUrl(b.logo) }));
   if (profile) profile.photo = assetUrl(profile.photo);
   res.json({ success: true, profile, brands });
@@ -509,15 +616,15 @@ function readBrand(body) {
   if (url === null) return { error: 'Website link must start with http:// or https://' };
   const logo = b.logo ? cleanImage(b.logo) : '';
   if (b.logo && !logo) return { error: 'Logo must be an uploaded image.' };
-  return { name, tagline: cleanText(b.tagline, 240), url, logo };
+  return { name, tagline: cleanText(b.tagline, 240), description: cleanText(b.description, 2000), url, logo };
 }
 
 app.post('/api/admin/brands', requireAuth, requireAdmin, (req, res) => {
   const v = readBrand(req.body);
   if (v.error) return res.status(400).json({ success: false, message: v.error });
   const max = db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM brands').get().m;
-  const r = db.prepare('INSERT INTO brands (name, tagline, url, logo, sort_order) VALUES (?, ?, ?, ?, ?)')
-    .run(v.name, v.tagline, v.url, v.logo, max + 1);
+  const r = db.prepare('INSERT INTO brands (name, tagline, description, url, logo, sort_order) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(v.name, v.tagline, v.description, v.url, v.logo, max + 1);
   res.status(201).json({ success: true, id: r.lastInsertRowid });
 });
 
@@ -526,7 +633,7 @@ app.put('/api/admin/brands/:id', requireAuth, requireAdmin, (req, res) => {
   if (!db.prepare('SELECT id FROM brands WHERE id = ?').get(id)) return res.status(404).json({ success: false, message: 'Brand not found.' });
   const v = readBrand(req.body);
   if (v.error) return res.status(400).json({ success: false, message: v.error });
-  db.prepare('UPDATE brands SET name = ?, tagline = ?, url = ?, logo = ? WHERE id = ?').run(v.name, v.tagline, v.url, v.logo, id);
+  db.prepare('UPDATE brands SET name = ?, tagline = ?, description = ?, url = ?, logo = ? WHERE id = ?').run(v.name, v.tagline, v.description, v.url, v.logo, id);
   res.json({ success: true });
 });
 
@@ -871,6 +978,169 @@ app.delete('/api/admin/users/:id', requireAuth, requireAdmin, (req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Users: developer access (admin only)                                */
+/* ------------------------------------------------------------------ */
+app.patch('/api/admin/users/:id/role', requireAuth, requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const role = String((req.body && req.body.role) || '');
+  if (!['developer', 'user'].includes(role)) return res.status(400).json({ success: false, message: 'Role must be developer or user.' });
+  const target = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id);
+  if (!target) return res.status(404).json({ success: false, message: 'User not found.' });
+  if (target.role === 'admin' || id === req.session.user.id) return res.status(400).json({ success: false, message: 'The admin role cannot be changed here.' });
+  db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
+  res.json({ success: true });
+});
+
+/* ------------------------------------------------------------------ */
+/* Visitor analytics: anonymous, first-party, stored in this database  */
+/* ------------------------------------------------------------------ */
+const DAY = 86400000, HOUR = 3600000, MIN = 60000;
+const BOT_RE = /bot|crawl|spider|slurp|facebookexternalhit|preview|headless|lighthouse|pingdom|uptime|curl|wget|python|httpclient|monitor|scanner|gtmetrix|axios|node-fetch/i;
+const TZ_COUNTRY = { 'Africa/Harare': 'Zimbabwe', 'Africa/Johannesburg': 'South Africa', 'Africa/Maputo': 'Mozambique', 'Africa/Lusaka': 'Zambia', 'Africa/Gaborone': 'Botswana', 'Africa/Windhoek': 'Namibia', 'Africa/Blantyre': 'Malawi', 'Africa/Nairobi': 'Kenya', 'Africa/Lagos': 'Nigeria', 'Africa/Accra': 'Ghana', 'Africa/Cairo': 'Egypt', 'Africa/Kampala': 'Uganda', 'Africa/Dar_es_Salaam': 'Tanzania', 'Africa/Addis_Ababa': 'Ethiopia', 'Africa/Kinshasa': 'DR Congo', 'Africa/Lubumbashi': 'DR Congo', 'Africa/Luanda': 'Angola', 'Africa/Casablanca': 'Morocco', 'Europe/London': 'United Kingdom', 'Europe/Dublin': 'Ireland', 'Europe/Paris': 'France', 'Europe/Berlin': 'Germany', 'Europe/Madrid': 'Spain', 'Europe/Rome': 'Italy', 'Europe/Amsterdam': 'Netherlands', 'Europe/Lisbon': 'Portugal', 'America/New_York': 'United States', 'America/Chicago': 'United States', 'America/Denver': 'United States', 'America/Los_Angeles': 'United States', 'America/Toronto': 'Canada', 'America/Sao_Paulo': 'Brazil', 'Asia/Dubai': 'UAE', 'Asia/Kolkata': 'India', 'Asia/Calcutta': 'India', 'Asia/Karachi': 'Pakistan', 'Asia/Shanghai': 'China', 'Asia/Singapore': 'Singapore', 'Asia/Tokyo': 'Japan', 'Australia/Sydney': 'Australia', 'Pacific/Auckland': 'New Zealand' };
+const countryOf = (tz) => TZ_COUNTRY[tz] || (tz ? String(tz).split('/')[0] : 'Unknown');
+const clipStr = (v, n) => String(v == null ? '' : v).slice(0, n);
+function parseUA(ua) {
+  const dev = /iPad|Tablet|PlayBook|Silk|(Android(?!.*Mobile))/i.test(ua) ? 'tablet' : /Mobi|Android|iPhone|iPod/i.test(ua) ? 'mobile' : 'desktop';
+  const br = /Edg\//.test(ua) ? 'Edge' : /OPR\/|Opera/.test(ua) ? 'Opera' : /SamsungBrowser/.test(ua) ? 'Samsung Internet' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Other';
+  const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad|iPod/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows' : /Mac OS/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'Other';
+  return { dev, br, os };
+}
+const trackLimiter = rateLimit({ windowMs: 60 * 1000, max: 90, standardHeaders: true, legacyHeaders: false, message: { success: false } });
+const insHit = db.prepare('INSERT INTO hits (t, vid, sid, path, ref, dev, br, os, tz, nv) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+const upLive = db.prepare(`INSERT INTO live (vid, t, sid, path, dev, br, tz) VALUES (?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(vid) DO UPDATE SET t = excluded.t, sid = excluded.sid, path = excluded.path, dev = excluded.dev, br = excluded.br, tz = excluded.tz`);
+
+app.post('/api/track', trackLimiter, (req, res) => {
+  try {
+    const ua = String(req.get('user-agent') || '');
+    const u = req.session.user;
+    if (!ua || BOT_RE.test(ua) || (u && (u.role === 'admin' || u.role === 'developer'))) return res.status(204).end(); // never count bots or staff
+    const b = req.body || {};
+    const vid = clipStr(b.vid, 40), sid = clipStr(b.sid, 24);
+    if (!/^[a-z0-9]{8,40}$/i.test(vid) || !/^[a-z0-9]{6,24}$/i.test(sid)) return res.status(400).end();
+    const pth = clipStr(b.path, 200).split('?')[0].split('#')[0];
+    if (!pth.startsWith('/')) return res.status(400).end();
+    const d = parseUA(ua), tz = clipStr(b.tz, 40).replace(/[^A-Za-z0-9_\/+-]/g, ''), now = Date.now();
+    if (b.type === 'view') {
+      const ref = clipStr(b.ref, 80).replace(/[^A-Za-z0-9.\-]/g, '');
+      insHit.run(now, vid, sid, pth, ref, d.dev, d.br, d.os, tz, b.nv ? 1 : 0);
+    }
+    upLive.run(vid, now, sid, pth, d.dev, d.br, tz);
+    res.status(204).end();
+  } catch (e) { res.status(204).end(); }
+});
+
+function purgeOld() {
+  try {
+    db.prepare('DELETE FROM hits WHERE t < ?').run(Date.now() - 90 * DAY);
+    db.prepare('DELETE FROM live WHERE t < ?').run(Date.now() - HOUR);
+  } catch (e) { pushError('purge', e.message); }
+}
+purgeOld();
+setInterval(purgeOld, 10 * MIN).unref();
+
+app.get('/api/staff/analytics', requireAuth, requireStaff, (req, res) => {
+  const range = ['today', '7d', '30d'].includes(req.query.range) ? req.query.range : 'today';
+  const tzMin = Math.max(-840, Math.min(840, Number(req.query.tz) || 0)); // browser's getTimezoneOffset()
+  const now = Date.now();
+  const startToday = Math.floor((now - tzMin * MIN) / DAY) * DAY + tzMin * MIN;
+  const days = range === '7d' ? 7 : 30;
+  const from = range === 'today' ? startToday : startToday - (days - 1) * DAY;
+  const unit = range === 'today' ? HOUR : DAY;
+  const nBuckets = range === 'today' ? 24 : days;
+  const one = (sql, ...a) => db.prepare(sql).get(...a);
+  const top = (col, label) => db.prepare(`SELECT ${col} AS k, COUNT(*) AS c FROM hits WHERE t >= ? AND ${col} != '' GROUP BY ${col} ORDER BY c DESC LIMIT 8`).all(from).map((r) => [r.k, r.c]);
+
+  const tot = one('SELECT COUNT(*) AS views, COUNT(DISTINCT vid) AS visitors, COUNT(DISTINCT sid) AS sessions, COALESCE(SUM(nv), 0) AS newv FROM hits WHERE t >= ?', from);
+  const single = one('SELECT COUNT(*) AS c FROM (SELECT sid FROM hits WHERE t >= ? GROUP BY sid HAVING COUNT(*) = 1)', from).c;
+  const today = one('SELECT COUNT(*) AS views, COUNT(DISTINCT vid) AS visitors FROM hits WHERE t >= ?', startToday);
+
+  const counts = new Array(nBuckets).fill(0);
+  db.prepare('SELECT CAST((t - ?) / ? AS INTEGER) AS b, COUNT(*) AS c FROM hits WHERE t >= ? GROUP BY b').all(from, unit, from)
+    .forEach((r) => { if (r.b >= 0 && r.b < nBuckets) counts[r.b] = r.c; });
+  const mins = new Array(30).fill(0), m0 = now - 30 * MIN;
+  db.prepare('SELECT CAST((t - ?) / ? AS INTEGER) AS b, COUNT(*) AS c FROM hits WHERE t >= ? GROUP BY b').all(m0, MIN, m0)
+    .forEach((r) => { if (r.b >= 0 && r.b < 30) mins[r.b] = r.c; });
+
+  const countries = {};
+  db.prepare('SELECT tz, COUNT(*) AS c FROM hits WHERE t >= ? GROUP BY tz').all(from).forEach((r) => { const k = countryOf(r.tz); countries[k] = (countries[k] || 0) + r.c; });
+  const live = db.prepare('SELECT path, dev, br, tz, t FROM live WHERE t >= ? ORDER BY t DESC LIMIT 25').all(now - 90000)
+    .map((r) => ({ path: r.path, dev: r.dev, br: r.br, country: countryOf(r.tz), ago: Math.round((now - r.t) / 1000) }));
+  const activeNow = one('SELECT COUNT(*) AS c FROM live WHERE t >= ?', now - 90000).c;
+  const vis = (since) => Math.max(one('SELECT COUNT(DISTINCT vid) AS c FROM hits WHERE t >= ?', since).c, one('SELECT COUNT(*) AS c FROM live WHERE t >= ?', since).c);
+
+  res.json({
+    success: true, range, now, from, unit, tz: tzMin,
+    live: { active: activeNow, rows: live }, last5: vis(now - 5 * MIN), last30: vis(now - 30 * MIN),
+    today, totals: { views: tot.views, visitors: tot.visitors, sessions: tot.sessions, newVisitors: tot.newv,
+      pagesPerVisit: tot.sessions ? Math.round(tot.views / tot.sessions * 10) / 10 : 0, bounce: tot.sessions ? Math.round(single / tot.sessions * 100) : 0 },
+    buckets: counts, minutes: mins,
+    top: { pages: top('path'), referrers: db.prepare(`SELECT CASE WHEN ref = '' THEN 'Direct or unknown' ELSE ref END AS k, COUNT(*) AS c FROM hits WHERE t >= ? GROUP BY k ORDER BY c DESC LIMIT 8`).all(from).map((r) => [r.k, r.c]),
+      countries: Object.keys(countries).map((k) => [k, countries[k]]).sort((a, b) => b[1] - a[1]).slice(0, 8),
+      devices: top('dev'), browsers: top('br'), os: top('os') },
+    stored: one('SELECT COUNT(*) AS c FROM hits').c
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Site health (admin and developer accounts)                          */
+/* ------------------------------------------------------------------ */
+const storageMarker = path.join(dataDir, '.first-boot');
+try { if (!fs.existsSync(storageMarker)) fs.writeFileSync(storageMarker, String(Date.now())); } catch (e) { /* read-only */ }
+const dirInfo = (dir) => {
+  let files = 0, bytes = 0, writable = true;
+  try { fs.readdirSync(dir).forEach((f) => { try { const st = fs.statSync(path.join(dir, f)); if (st.isFile()) { files++; bytes += st.size; } } catch (e) { /* skip */ } }); } catch (e) { /* missing */ }
+  try { fs.accessSync(dir, fs.constants.W_OK); } catch (e) { writable = false; }
+  return { files, bytes, writable };
+};
+
+app.get('/api/health', (req, res) => {
+  try { db.prepare('SELECT 1').get(); res.json({ ok: true, uptime: Math.round(process.uptime()), time: new Date().toISOString() }); }
+  catch (e) { res.status(503).json({ ok: false }); }
+});
+
+app.get('/api/staff/health', requireAuth, requireStaff, (req, res) => {
+  const now = Date.now(), mem = process.memoryUsage();
+  const n = (t) => { try { return db.prepare(`SELECT COUNT(*) AS c FROM ${t}`).get().c; } catch (e) { return null; } };
+  let integrity = 'unknown'; try { integrity = db.prepare('PRAGMA quick_check').get().quick_check; } catch (e) { integrity = 'error: ' + e.message; }
+  let dbBytes = 0; try { dbBytes = fs.statSync(path.join(dataDir, 'app.db')).size; } catch (e) { /* none */ }
+  let firstBoot = null; try { firstBoot = Number(fs.readFileSync(storageMarker, 'utf8')) || null; } catch (e) { /* none */ }
+  const lat = reqStats.lat.slice().sort((a, b) => a - b);
+  const avg = lat.length ? lat.reduce((a, b) => a + b, 0) / lat.length : 0;
+  const p95 = lat.length ? lat[Math.min(lat.length - 1, Math.floor(lat.length * 0.95))] : 0;
+  const uploads = dirInfo(uploadsDir), deliver = dirInfo(deliverablesDir);
+  const adminRow = db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'admin'").get().c;
+  const errLastHour = recentErrors.filter((e) => now - e.t < HOUR).length;
+  const uptimeMs = now - startedAt;
+  const storageLikelyWiped = firstBoot && (now - firstBoot) < uptimeMs + 30000 && uptimeMs < 6 * HOUR;
+  const secure = req.secure || String(req.get('x-forwarded-proto') || '') === 'https';
+
+  const checks = [];
+  const add = (key, label, status, detail) => checks.push({ key, label, status, detail });
+  add('db', 'Database integrity', integrity === 'ok' ? 'ok' : 'bad', integrity === 'ok' ? 'Quick check passed.' : 'Database reports: ' + integrity);
+  add('admin', 'Admin account', adminRow ? 'ok' : 'bad', adminRow ? 'Present.' : 'No admin account exists. Set ADMIN_PASSWORD and restart.');
+  add('secret', 'Session secret', SESSION_SECRET_FROM_ENV ? 'ok' : 'warn', SESSION_SECRET_FROM_ENV ? 'Set in environment, so logins survive restarts.' : 'SESSION_SECRET is not set. A generated one is used, but a new deploy may sign everyone out.');
+  add('prod', 'Production mode', IS_PROD ? 'ok' : 'warn', IS_PROD ? 'NODE_ENV=production.' : 'NODE_ENV is not production (secure cookies are off).');
+  add('https', 'HTTPS', secure ? 'ok' : (IS_PROD ? 'bad' : 'warn'), secure ? 'This request arrived over HTTPS.' : 'This request was not HTTPS.');
+  add('firebase', 'Firebase sign-in', fbAdmin ? 'ok' : 'warn', fbAdmin ? 'Verified on the server.' : 'FIREBASE_PROJECT_ID is not set; the older email login is used.');
+  add('pay', 'Payments', paynowReady ? 'ok' : 'warn', paynowReady ? 'Paynow is configured.' : 'Paynow is not configured; buyers pay by EcoCash and the admin confirms.');
+  add('storage', 'Storage persistence', storageLikelyWiped ? 'warn' : 'ok', storageLikelyWiped ? 'Storage was created at the last start. If you did not just set up the site, the disk is not persistent and data is lost on restart. Attach a persistent disk.' : 'Data folder is older than this start, so it survives restarts.');
+  add('uploads', 'Uploads folder', uploads.writable && deliver.writable ? 'ok' : 'bad', uploads.writable && deliver.writable ? 'Writable.' : 'Cannot write to uploads or deliverables.');
+  add('errors', 'Server errors (last hour)', errLastHour === 0 ? 'ok' : (errLastHour > 10 ? 'bad' : 'warn'), errLastHour === 0 ? 'No 5xx errors.' : `${errLastHour} error${errLastHour === 1 ? '' : 's'}. See the list below.`);
+  add('memory', 'Memory', mem.rss > 450 * 1024 * 1024 ? 'warn' : 'ok', `${Math.round(mem.rss / 1048576)} MB in use.`);
+  const status = checks.some((c) => c.status === 'bad') ? 'problem' : checks.some((c) => c.status === 'warn') ? 'attention' : 'healthy';
+
+  res.json({
+    success: true, status, checks, now,
+    server: { startedAt, uptime: Math.round(uptimeMs / 1000), node: process.version, platform: `${process.platform} ${process.arch}`, env: process.env.NODE_ENV || 'development', rssMB: Math.round(mem.rss / 1048576), heapMB: Math.round(mem.heapUsed / 1048576), baseUrl: BASE_URL, siteUrl: SITE_URL, cookieSameSite: COOKIE_SAMESITE },
+    database: { bytes: dbBytes, integrity, counts: { users: n('users'), orders: n('orders'), designs: n('design_posts'), invoices: n('invoices'), brands: n('brands'), visits: n('hits') } },
+    storage: { uploads, deliverables: deliver, firstCreated: firstBoot },
+    requests: { total: reqStats.total, ok: reqStats.s2 + reqStats.s3, clientErrors: reqStats.s4, serverErrors: reqStats.s5, avgMs: Math.round(avg), p95Ms: Math.round(p95) },
+    errors: recentErrors.slice(0, 20)
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* Pages and static files (only public file types are served)          */
 /* ------------------------------------------------------------------ */
 app.get('/dashboard.html', (req, res) => {
@@ -902,6 +1172,13 @@ app.use(express.static(__dirname, { dotfiles: 'deny', index: false }));
 
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('*', (req, res) => res.redirect('/'));
+
+app.use((err, req, res, next) => {
+  pushError('exception', err && err.message ? err.message : err, { status: 500 });
+  console.error(err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ success: false, message: 'Something went wrong on the server.' });
+});
 
 app.listen(PORT, () => {
   console.log(`CWS Multimedia Connect running at ${BASE_URL}`);
