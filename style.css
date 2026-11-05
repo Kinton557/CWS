@@ -458,7 +458,7 @@ body.about-page .story-block p{text-shadow:0 1px 12px rgba(0,0,0,.6)}
 
 /* About: Who is CWS */
 .who-section h2{margin:10px 0 22px}
-.who-section p{color:var(--muted);font-size:1.05rem;line-height:1.75;margin-bottom:18px}
+.who-section p{color: white;font-size:1.05rem;line-height:1.75;margin-bottom:18px}
 .who-section .who-lead{color:var(--text);font-size:1.15rem}
 .who-section .who-lead strong{color:var(--accent)}
 .who-section .who-tagline{color:var(--text);font-weight:700;font-size:1.1rem}
