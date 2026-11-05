@@ -391,7 +391,7 @@ a.brand-card:hover{transform:translateY(-4px);border-color:var(--border-strong)}
 
 /* ===== About: the photo is the background of the whole page ===== */
 body.about-page{position:relative}
-.about-bg{position:up;inset:0;z-index:-1;pointer-events:none;overflow:hidden;background:#05070a url(assets/about-bg.jpg) 50% 0/min(100%,640px) auto no-repeat}
+.about-bg{position:absolute;inset:0;z-index:-1;pointer-events:none;overflow:hidden;background:#05070a url(assets/about-bg.jpg) 50% 0/min(100%,640px) auto no-repeat}
 .about-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(5,7,10,.3) 0,rgba(5,7,10,.5) 520px,#05070a 900px)}
 body.about-page{color-scheme:dark;--bg:#0b0e13;--surface:rgba(12,16,22,.72);--surface-2:rgba(18,23,30,.72);--border:#252e3a;--border-strong:#34404f;--text:#f3f5f8;--muted:#b3bfcc;--accent:#c3c9d1;--accent-ink:#0b0e13;--accent-soft:rgba(195,201,209,.12);--nav-bg:rgba(11,14,19,.78);--hover:rgba(255,255,255,.06);background:transparent}
 body.about-page .page-hero{border-bottom:0;min-height:clamp(260px,42vh,420px);display:flex;align-items:flex-end}
