@@ -42,3 +42,14 @@ Developers can open Dashboard > Website health and Visitor analytics (read only;
 
 ## Analytics
 Visits are counted on our own server (table `hits`, kept 90 days). Staff and bots are skipped; visitors can opt out from the Privacy page. Public uptime ping for monitors: `GET /api/health`.
+
+## EcoCash PIN prompt (EcoCash Instant Payments)
+On the pricing page, "EcoCash – PIN prompt on your phone" charges the buyer's EcoCash wallet through EcoCash's own API. The buyer approves with their PIN and the order turns paid by itself. Paynow, InnBucks and the manual EcoCash option keep working as before.
+
+It switches on when ALL of these are set in Render > Environment, then redeploy:
+`EIP_BASE_URL`, `EIP_USERNAME`, `EIP_PASSWORD`, `EIP_MERCHANT_CODE`, `EIP_MERCHANT_PIN`, `EIP_MERCHANT_NUMBER`, `EIP_TERMINAL_ID`, `EIP_MERCHANT_NAME`.
+Optional: `EIP_SUPER_MERCHANT_NAME` (default ECOCASH), `EIP_LOCATION` (Harare), `EIP_CHANNEL` (WEB), `EIP_CURRENCY` (USD).
+Sandbox address: `https://developers.ecocash.co.zw/sandbox/payment/v1`. Never put these values in GitHub.
+
+Testing in the sandbox: only EcoCash numbers verified under Test Numbers in the EcoCash developer portal can be charged. On the phone, PIN 0000 pays, 1111 not enough money, 2222 wrong PIN. No real money moves.
+To take real money you need your own EcoCash merchant account and EcoCash's production credentials; then swap these values and the base URL.

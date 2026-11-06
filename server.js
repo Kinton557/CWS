@@ -29,6 +29,13 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://cwsmultimediaco
 const assetUrl = (v) => (/^uploads\//.test(String(v || '')) ? `${API_URL}/${v}` : v);
 const relAsset = (v) => (String(v || '').startsWith(`${API_URL}/uploads/`) ? String(v).slice(API_URL.length + 1) : v);
 const ECOCASH_NUMBER = process.env.ECOCASH_NUMBER || '0774274544';
+// Direct EcoCash (EcoCash Instant Payments): the PIN prompt appears on the buyer's phone.
+// Switched on by setting EIP_USERNAME and EIP_PASSWORD (plus the merchant values below) in the environment.
+const EIP_BASE = (process.env.EIP_BASE_URL || 'https://developers.ecocash.co.zw/sandbox/payment/v1').replace(/\/+$/, '');
+const EIP_SANDBOX = EIP_BASE.includes('/sandbox/');
+const EIP_CURRENCY = process.env.EIP_CURRENCY || 'USD';
+const eipReady = ['EIP_USERNAME', 'EIP_PASSWORD', 'EIP_MERCHANT_CODE', 'EIP_MERCHANT_PIN', 'EIP_MERCHANT_NUMBER', 'EIP_TERMINAL_ID', 'EIP_MERCHANT_NAME']
+  .every((name) => Boolean(process.env[name]));
 const IS_PROD = process.env.NODE_ENV === 'production';
 
 const dataDir = path.join(__dirname, 'data');
@@ -144,7 +151,7 @@ function addColumnIfMissing(table, column, definition) {
 ['label TEXT DEFAULT \'\'', 'filter_key TEXT DEFAULT \'flyers\'', 'file_name TEXT DEFAULT \'\'', 'format TEXT DEFAULT \'Digital\'',
   'delivery TEXT DEFAULT \'Instant after payment\'', 'meta TEXT DEFAULT \'\'', 'features TEXT DEFAULT \'[]\'', 'item_code TEXT']
   .forEach((def) => addColumnIfMissing('design_posts', def.split(' ')[0], def.split(' ').slice(1).join(' ')));
-['payment_ref TEXT', 'paid_at TEXT'].forEach((def) => addColumnIfMissing('orders', def.split(' ')[0], def.split(' ').slice(1).join(' ')));
+['payment_ref TEXT', 'paid_at TEXT', 'eip_msisdn TEXT'].forEach((def) => addColumnIfMissing('orders', def.split(' ')[0], def.split(' ').slice(1).join(' ')));
 const legacyCols = db.prepare('PRAGMA table_info(design_posts)').all().map((c) => c.name);
 if (legacyCols.includes('access_code')) {
   db.exec("UPDATE design_posts SET item_code = access_code WHERE item_code IS NULL OR item_code = ''");
@@ -413,6 +420,62 @@ function newPaynow() {
   return p;
 }
 
+// One call to the EcoCash API. The caller reads httpStatus and body; only network trouble throws.
+async function eipRequest(method, apiPath, payload) {
+  const login = Buffer.from(`${process.env.EIP_USERNAME}:${process.env.EIP_PASSWORD}`).toString('base64');
+  const response = await fetch(EIP_BASE + apiPath, {
+    method,
+    headers: { Authorization: `Basic ${login}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: payload ? JSON.stringify(payload) : undefined,
+    signal: AbortSignal.timeout(30000)
+  });
+  const body = await response.json().catch(() => ({}));
+  return { httpStatus: response.status, body };
+}
+
+function eipChargeBody(correlator, msisdn, amount, description) {
+  return {
+    clientCorrelator: correlator,
+    notifyUrl: '',
+    referenceCode: correlator,
+    tranType: 'MER',
+    endUserId: msisdn,
+    remarks: description,
+    transactionOperationStatus: 'Charged',
+    paymentAmount: {
+      charginginformation: { amount: Number(amount).toFixed(2), currency: EIP_CURRENCY, description },
+      chargeMetaData: { channel: process.env.EIP_CHANNEL || 'WEB' }
+    },
+    merchantCode: process.env.EIP_MERCHANT_CODE,
+    merchantPin: process.env.EIP_MERCHANT_PIN,
+    merchantNumber: process.env.EIP_MERCHANT_NUMBER,
+    countryCode: 'ZW',
+    terminalID: process.env.EIP_TERMINAL_ID,
+    location: process.env.EIP_LOCATION || 'Harare',
+    superMerchantName: process.env.EIP_SUPER_MERCHANT_NAME || 'ECOCASH',
+    merchantName: process.env.EIP_MERCHANT_NAME
+  };
+}
+
+// Asks EcoCash how a charge went (PENDING, SUCCESS or FAILED) and updates the order to match.
+async function eipRefreshOrder(order) {
+  const lookup = `/${encodeURIComponent(order.eip_msisdn)}/transactions/amount/${encodeURIComponent(order.payment_ref)}`;
+  const r = await eipRequest('GET', lookup);
+  if (r.httpStatus !== 200) return { message: '' }; // not registered yet, keep waiting
+  const code = String(r.body.status || '').toUpperCase();
+  if (code === 'SUCCESS') {
+    const sameAmount = r.body.amount === undefined || Math.round(Number(r.body.amount) * 100) === Math.round(Number(order.amount) * 100);
+    if (sameAmount) markOrderPaid(order.id);
+    return { message: sameAmount ? '' : 'The amount EcoCash received does not match this order. Please contact us.' };
+  }
+  if (code === 'FAILED') {
+    db.prepare("UPDATE orders SET status = 'cancelled' WHERE id = ? AND status = 'pending'").run(order.id);
+    db.prepare("UPDATE invoices SET status = 'void', updated_at = CURRENT_TIMESTAMP WHERE order_id = ?").run(order.id);
+    return { message: clean(r.body.statusMessage, 120) || 'EcoCash did not approve the payment.' };
+  }
+  return { message: '' };
+}
+
 const requireAuth = (req, res, next) => {
   if (!req.session.user) return res.status(401).json({ success: false, message: 'Please sign in first.' });
   next();
@@ -434,7 +497,7 @@ const requireStaff = (req, res, next) => {
 /* Auth                                                                */
 /* ------------------------------------------------------------------ */
 app.get('/api/config', (req, res) => {
-  res.json({ success: true, firebase: Boolean(process.env.FIREBASE_PROJECT_ID), ecocash: ECOCASH_NUMBER, accountName: 'Chikomborero Walter Sumairi', paynow: paynowReady, guideAi: GUIDE_AI_READY });
+  res.json({ success: true, firebase: Boolean(process.env.FIREBASE_PROJECT_ID), ecocash: ECOCASH_NUMBER, accountName: 'Chikomborero Walter Sumairi', paynow: paynowReady, ecocashPrompt: eipReady, eipSandbox: eipReady && EIP_SANDBOX, guideAi: GUIDE_AI_READY });
 });
 
 app.get('/api/session', (req, res) => {
@@ -779,7 +842,12 @@ async function createOrderHandler(req, res) {
     if (manual && !clean(paymentRef, 60)) {
       return res.status(400).json({ success: false, message: 'Enter the EcoCash transaction reference from your payment message.' });
     }
-    if (!manual && !paynowReady) {
+    const useEip = method === 'ecocash' && eipReady;
+    const localNumber = clean(phone, 20).replace(/\D/g, '').replace(/^263/, '0');
+    if (useEip && !/^07[78]\d{7}$/.test(localNumber)) {
+      return res.status(400).json({ success: false, message: 'Enter your EcoCash number, for example 0771234567.' });
+    }
+    if (!manual && !paynowReady && !useEip) {
       return res.status(503).json({ success: false, message: `Online card/wallet checkout is not switched on yet. Pay by EcoCash to ${ECOCASH_NUMBER} and enter the reference instead.` });
     }
     if ((method === 'ecocash' || method === 'innbucks') && !clean(phone, 20)) {
@@ -799,6 +867,28 @@ async function createOrderHandler(req, res) {
         success: true, orderId: order.id,
         message: 'Order received. Once Chikomborero confirms your EcoCash payment, your access code will appear in your dashboard.'
       });
+    }
+
+    if (useEip) {
+      // The reference is saved before EcoCash is called, so a slow answer can be looked up later and never charged twice.
+      const correlator = `CWS-${order.id}-${Date.now().toString(36).toUpperCase()}`;
+      const msisdn = `263${localNumber.slice(1)}`;
+      db.prepare('UPDATE orders SET payment_ref = ?, eip_msisdn = ? WHERE id = ?').run(correlator, msisdn, order.id);
+      let result;
+      try {
+        result = await eipRequest('POST', '/transactions/amount/', eipChargeBody(correlator, msisdn, amount, title));
+      } catch (err) {
+        console.error('EcoCash charge got no answer for order', order.id, err.message);
+        return res.status(201).json({ success: true, orderId: order.id, eip: true, message: 'Payment sent. Approve it on your phone with your EcoCash PIN.' });
+      }
+      if (result.httpStatus !== 200) {
+        console.error('EcoCash refused order', order.id, result.httpStatus, result.body.statusMessage || '');
+        db.prepare("UPDATE orders SET status = 'cancelled' WHERE id = ?").run(order.id);
+        db.prepare("UPDATE invoices SET status = 'void' WHERE order_id = ?").run(order.id);
+        const why = result.httpStatus === 422 && result.body.statusMessage ? clean(result.body.statusMessage, 120) : 'EcoCash could not start this payment. Please check the number and try again.';
+        return res.status(400).json({ success: false, message: why });
+      }
+      return res.status(201).json({ success: true, orderId: order.id, eip: true, message: 'Check your phone and enter your EcoCash PIN to approve the payment.' });
     }
 
     const paynow = newPaynow();
@@ -824,6 +914,26 @@ async function createOrderHandler(req, res) {
 }
 app.post('/api/orders', requireAuth, createOrderHandler);
 app.post('/api/checkout', requireAuth, createOrderHandler); // used by the pricing page
+
+// The pricing page asks this while the buyer is entering their PIN. Only the buyer (or admin) can ask.
+app.get('/api/orders/:id/status', requireAuth, async (req, res) => {
+  try {
+    const user = req.session.user;
+    let order = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(req.params.id));
+    if (!order || (user.role !== 'admin' && order.user_id !== user.id)) {
+      return res.status(404).json({ success: false, message: 'Order not found.' });
+    }
+    let message = '';
+    if (order.status === 'pending' && order.eip_msisdn && eipReady) {
+      ({ message } = await eipRefreshOrder(order));
+      order = db.prepare('SELECT * FROM orders WHERE id = ?').get(order.id);
+    }
+    res.json({ success: true, status: order.status, message });
+  } catch (error) {
+    console.error('Order status error:', error);
+    res.status(500).json({ success: false, message: 'Could not check the payment.' });
+  }
+});
 
 app.patch('/api/admin/orders/:id', requireAuth, requireAdmin, (req, res) => {
   const id = Number(req.params.id);
@@ -1123,7 +1233,7 @@ app.get('/api/staff/health', requireAuth, requireStaff, (req, res) => {
   add('prod', 'Production mode', IS_PROD ? 'ok' : 'warn', IS_PROD ? 'NODE_ENV=production.' : 'NODE_ENV is not production (secure cookies are off).');
   add('https', 'HTTPS', secure ? 'ok' : (IS_PROD ? 'bad' : 'warn'), secure ? 'This request arrived over HTTPS.' : 'This request was not HTTPS.');
   add('firebase', 'Firebase sign-in', fbAdmin ? 'ok' : 'warn', fbAdmin ? 'Verified on the server.' : 'FIREBASE_PROJECT_ID is not set; the older email login is used.');
-  add('pay', 'Payments', paynowReady ? 'ok' : 'warn', paynowReady ? 'Paynow is configured.' : 'Paynow is not configured; buyers pay by EcoCash and the admin confirms.');
+  add('pay', 'Payments', paynowReady || eipReady ? 'ok' : 'warn', eipReady ? (EIP_SANDBOX ? 'EcoCash PIN prompt is on (sandbox test mode).' : 'EcoCash PIN prompt is on.') : (paynowReady ? 'Paynow is configured.' : 'No online payment is configured; buyers pay by EcoCash and the admin confirms.'));
   add('storage', 'Storage persistence', storageLikelyWiped ? 'warn' : 'ok', storageLikelyWiped ? 'Storage was created at the last start. If you did not just set up the site, the disk is not persistent and data is lost on restart. Attach a persistent disk.' : 'Data folder is older than this start, so it survives restarts.');
   add('uploads', 'Uploads folder', uploads.writable && deliver.writable ? 'ok' : 'bad', uploads.writable && deliver.writable ? 'Writable.' : 'Cannot write to uploads or deliverables.');
   add('errors', 'Server errors (last hour)', errLastHour === 0 ? 'ok' : (errLastHour > 10 ? 'bad' : 'warn'), errLastHour === 0 ? 'No 5xx errors.' : `${errLastHour} error${errLastHour === 1 ? '' : 's'}. See the list below.`);

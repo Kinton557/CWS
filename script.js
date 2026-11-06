@@ -62,6 +62,27 @@ function closeOrderModal() {
   if (modal) modal.classList.remove('active');
 }
 
+// After an EcoCash prompt is sent, ask the server every few seconds until the buyer has paid or cancelled.
+async function waitForEcoCash(orderId, box, firstMessage) {
+  box.style.color = 'var(--accent)';
+  box.innerText = firstMessage || 'Check your phone and enter your EcoCash PIN.';
+  for (let i = 0; i < 40; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    const { data } = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}/status`);
+    if (data.status === 'paid') {
+      box.innerText = 'Payment received. Thank you! Taking you to your dashboard…';
+      setTimeout(() => { window.location.href = '/dashboard.html'; }, 2000);
+      return;
+    }
+    if (data.status === 'cancelled') {
+      box.style.color = '#ef4444';
+      box.innerText = (data.message ? data.message + '. ' : '') + 'The payment was not completed, so you have not been charged.';
+      return;
+    }
+  }
+  box.innerText = 'We have not seen your payment yet. If you approved it, it will show in your dashboard shortly.';
+}
+
 function handlePaymentMethodChange() {
   const method = document.getElementById('paymentMethod');
   const phoneGroup = document.getElementById('phoneGroup');
@@ -77,7 +98,10 @@ function handlePaymentMethodChange() {
   if (phoneInput) phoneInput.required = mobile;
   if (refGroup) refGroup.style.display = manual ? 'block' : 'none';
   if (refInput) refInput.required = manual;
-  if (manualNote) {
+  if (manualNote && method.value === 'ecocash' && siteConfig.eipSandbox) {
+    manualNote.style.display = 'block';
+    manualNote.textContent = 'Test mode: no real money moves. Only EcoCash numbers added in the EcoCash developer portal can be charged. On the phone, PIN 0000 pays, 1111 means not enough money, 2222 is a wrong PIN.';
+  } else if (manualNote) {
     manualNote.style.display = manual ? 'block' : 'none';
     manualNote.innerHTML = `Send <strong>${money(document.getElementById('custAmount').value)}</strong> by EcoCash to <strong>${esc(siteConfig.ecocash)}</strong> (${esc(siteConfig.accountName)}), then type the transaction reference from the EcoCash confirmation message below.`;
   }
@@ -652,6 +676,7 @@ document.addEventListener('DOMContentLoaded', () => {
           statusMsg.style.color = '#ef4444';
           statusMsg.innerHTML = 'Please <a href="login.html?next=pricing.html" style="text-decoration:underline">sign in</a> or <a href="signup.html" style="text-decoration:underline">create an account</a> first.';
         } else if (data.success) {
+          if (data.eip) { await waitForEcoCash(data.orderId, statusMsg, data.message); return; }
           if (data.redirectUrl) { window.location.href = data.redirectUrl; return; }
           statusMsg.style.color = 'var(--accent)';
           statusMsg.innerText = data.message || 'Order received.';
